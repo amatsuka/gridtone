@@ -1,0 +1,30 @@
+# Gridtone
+
+Десктоп-приложение для стилизации Instagram-сетки.
+Спецификация: docs/spec.md. Статус и решения: docs/progress.md, docs/decisions/.
+
+## Стек
+Electron + electron-vite, TypeScript strict, React, Zustand + Immer, WebGL2,
+sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
+
+## Команды
+- npm run dev — запуск
+- npm run typecheck — проверка типов: core, node (main/preload/indexer/tests), web
+- npm test — Vitest
+- npm run test:e2e — сборка + Playwright
+- npm run build — сборка
+- npm run fixtures -- <папка> [N] — синтетические фото для ручной проверки
+
+## Правила
+- Логика цвета, метрик, гармонии, подбора и LUT — только в src/core, без DOM и Node.
+  Это проверяет tsconfig.core.json: импорт fs или обращение к document в core не скомпилируется.
+- Конвейер цвета меняется синхронно в core/color/pipeline.ts и в шейдере;
+  тест сравнения шейдера с эталоном обязан проходить.
+- Новый алгоритм в core начинается с теста на синтетических данных.
+- Все каналы IPC объявлены в shared/ipc.ts; renderer не трогает fs напрямую.
+- Оригиналы фото никогда не перезаписываются.
+- Проект меняется только через ProjectSession.update в main, иначе изменение не попадёт в автосохранение.
+- Прокси строятся только в src/indexer/proxies.ts; pipelineColourspace('srgb') там обязателен (ADR 0004).
+- Новая зависимость — только с записью в docs/decisions/. npm 12 блокирует install-скрипты:
+  если пакету он нужен, разрешать осознанно через `npm install-scripts approve <pkg>`.
+- В конце этапа обновить docs/progress.md: что сделано, решения, что дальше.
