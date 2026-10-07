@@ -2,6 +2,7 @@
 // DOM остаётся для номеров, бейджей и кликов; холст лежит под ним (docs/spec.md, «Рендер»).
 import { bakeAdjust, CURVE_TABLE_SIZE, type BakedAdjust } from '@core/color/bake';
 import { HSL_TABLE_SIZE } from '@core/color/hsl';
+import type { ViewOutput } from '@core/color/view';
 import { gridWindowTransform } from '@core/project/crop';
 import type { Adjust, Project, Slot } from '@core/project/types';
 import type { AssetStatus } from '@shared/ipc';
@@ -12,6 +13,10 @@ import { ProxyTextures } from './textures';
 export interface GridScene {
   project: Project;
   assets: Record<string, AssetStatus>;
+  /** Пост-обработка режимов 3 и 4 (ADR 0012). */
+  view: ViewOutput;
+  /** До/после: фото без поправок и образов. */
+  original: boolean;
 }
 
 interface GpuState {
@@ -86,6 +91,7 @@ export class GridRenderer {
     const looks = new Map(scene.project.looks.map((look) => [look.id, look.adjust]));
     const bounds = canvas.getBoundingClientRect();
     gpu.program.use();
+    gpu.program.setView(scene.view);
 
     for (const tile of root.querySelectorAll<HTMLElement>('[data-slot-id]')) {
       const slot = slots.get(tile.dataset['slotId'] ?? '');
@@ -124,7 +130,8 @@ export class GridRenderer {
     if (!proxy) return false;
 
     const look = slot.lookId ? looks.get(slot.lookId) : undefined;
-    const passes = (look ? [slot.adjust, look] : [slot.adjust]).map((adjust) => {
+    const adjusts = scene.original ? [] : look ? [slot.adjust, look] : [slot.adjust];
+    const passes = adjusts.map((adjust) => {
       const baked = this.bake(adjust);
       return {
         baked,

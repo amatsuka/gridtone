@@ -37,6 +37,7 @@ uniform sampler2D uCurves; // RGBA32F, строка — таблица крив�
 uniform sampler2D uHsl;    // RGBA32F, строка — таблица HSL одного прохода
 uniform Pass uPass[2];     // поправка фото, затем образ
 uniform int uPassCount;
+uniform int uView;         // пост-обработка режима просмотра: VIEW_COLOR, VIEW_LUMINANCE, VIEW_POSTERIZE
 
 in vec2 vUv;
 out vec4 outColor;
@@ -197,11 +198,24 @@ vec3 applyPass(vec3 c0, Pass p) {
   return c;
 }
 
+// ─── Режимы просмотра 3 и 4 (src/core/color/view.ts) ─────────────────────────
+
+vec3 applyView(vec3 c) {
+  if (uView == VIEW_COLOR) return c;
+  float L = linearToOklab(decodeSrgb(c)).x;
+  if (uView == VIEW_POSTERIZE) {
+    float level = min(floor(clamp(L, 0.0, 1.0) * float(POSTERIZE_LEVELS)), float(POSTERIZE_LEVELS - 1));
+    L = (level + 0.5) / float(POSTERIZE_LEVELS);
+  }
+  // Серый с тем же OKLab L: линейное значение — ровно L³.
+  return vec3(encodeClamped(L * L * L));
+}
+
 void main() {
   vec3 c = texture(uImage, vUv).rgb;
   for (int i = 0; i < 2; i++) {
     if (i >= uPassCount) break;
     c = applyPass(c, uPass[i]);
   }
-  outColor = vec4(c, 1.0);
+  outColor = vec4(applyView(c), 1.0);
 }

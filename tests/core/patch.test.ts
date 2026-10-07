@@ -5,6 +5,7 @@ import { assignLook, createLook, removeLook } from '@core/project/looks';
 import { moveSlots } from '@core/project/order';
 import { applyProjectPatches, PatchError, type ProjectPatch } from '@core/project/patch';
 import type { Project } from '@core/project/types';
+import { CURVE_MAX_POINTS } from '@core/project/validate';
 
 enablePatches();
 
@@ -100,6 +101,37 @@ describe('патчи проекта из renderer', () => {
     expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'adjust', 'curves', 'r'], value: [[0, 0]] }]);
     expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'crop', 'feed', 'zoom'], value: 0.5 }]);
     expectRejected(project, [{ op: 'remove', path: ['slots', 0, 'adjust', 'hsl', 'red'] }]);
+  });
+
+  test('кривая: x строго растёт, не больше 16 точек', () => {
+    const project = sampleProject();
+    const path = ['slots', 0, 'adjust', 'curves', 'master'];
+    const ok: [number, number][] = Array.from({ length: CURVE_MAX_POINTS }, (_, i) => [i / (CURVE_MAX_POINTS - 1), i / (CURVE_MAX_POINTS - 1)]);
+    applyProjectPatches(project, [{ op: 'replace', path, value: ok }]);
+    expect(project.slots[0]?.adjust.curves.master).toEqual(ok);
+    const tooMany = [...ok.slice(0, 8), [0.5, 0.5], ...ok.slice(8)].sort((p, q) => p[0]! - q[0]!);
+    expectRejected(project, [{ op: 'replace', path, value: tooMany }]);
+    for (const bad of [
+      [
+        [0, 0],
+        [0.5, 0.4],
+        [0.5, 0.6],
+        [1, 1],
+      ],
+      [
+        [0, 0],
+        [0.7, 0.4],
+        [0.3, 0.6],
+        [1, 1],
+      ],
+      [
+        [0, 0],
+        [0.5, 1.2],
+        [1, 1],
+      ],
+    ]) {
+      expectRejected(project, [{ op: 'replace', path, value: bad }]);
+    }
   });
 
   test('путь через __proto__ не загрязняет прототип', () => {

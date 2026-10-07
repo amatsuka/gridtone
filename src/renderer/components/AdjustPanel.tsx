@@ -1,4 +1,8 @@
 import type { Adjust } from '@core/project/types';
+import { CurveEditor } from './CurveEditor';
+import { GradingPanel } from './GradingPanel';
+import { HslPanel } from './HslPanel';
+import { Slider } from './Slider';
 
 type SliderKey = 'exposure' | 'temp' | 'tint' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks' | 'vibrance' | 'saturation';
 
@@ -8,6 +12,7 @@ interface SliderSpec {
   min: number;
   max: number;
   step: number;
+  digits?: number;
 }
 
 const percent = (key: SliderKey, label: string): SliderSpec => ({ key, label, min: -100, max: 100, step: 1 });
@@ -18,7 +23,7 @@ const GROUPS: { title: string; sliders: SliderSpec[] }[] = [
   {
     title: 'Тон',
     sliders: [
-      { key: 'exposure', label: 'Экспозиция', min: -3, max: 3, step: 0.05 },
+      { key: 'exposure', label: 'Экспозиция', min: -3, max: 3, step: 0.05, digits: 2 },
       percent('contrast', 'Контраст'),
       percent('highlights', 'Света'),
       percent('shadows', 'Тени'),
@@ -29,9 +34,12 @@ const GROUPS: { title: string; sliders: SliderSpec[] }[] = [
   { title: 'Присутствие', sliders: [percent('vibrance', 'Сочность'), percent('saturation', 'Насыщенность')] },
 ];
 
+type EditHandler = (change: (adjust: Adjust) => void, gesture?: string) => void;
+
 /**
- * Ползунки коррекции — общие для поправки фото и образа, на этапе 2в и для редактора фото.
- * gesture — префикс ключа жеста: движение одного ползунка склеивается в одну запись истории.
+ * Инструменты коррекции — общие для поправки фото и образа, на этапе 2в и для редактора фото:
+ * ползунки, HSL, круги и кривые. Разделы идут в порядке групп копирования правок (adjustGroups.ts).
+ * gesture — префикс ключа жеста: движение одного ползунка, круга или точки кривой — одна запись истории.
  */
 export function AdjustPanel({
   adjust,
@@ -42,7 +50,7 @@ export function AdjustPanel({
   adjust: Adjust;
   disabled: boolean;
   gesture: string;
-  onEdit: (change: (adjust: Adjust) => void, gesture?: string) => void;
+  onEdit: EditHandler;
 }) {
   return (
     <>
@@ -52,9 +60,14 @@ export function AdjustPanel({
           {group.sliders.map((spec) => (
             <Slider
               key={spec.key}
-              spec={spec}
+              label={spec.label}
               value={adjust[spec.key]}
+              min={spec.min}
+              max={spec.max}
+              step={spec.step}
+              digits={spec.digits ?? 0}
               disabled={disabled}
+              testId={`value-${spec.key}`}
               onChange={(value) => onEdit((a) => void (a[spec.key] = value), `${gesture}:${spec.key}`)}
               // Сброс — отдельное действие, а не продолжение движения.
               onReset={() => onEdit((a) => void (a[spec.key] = 0))}
@@ -62,45 +75,18 @@ export function AdjustPanel({
           ))}
         </section>
       ))}
+      <section className="inspector-group">
+        <h3>HSL</h3>
+        <HslPanel hsl={adjust.hsl} disabled={disabled} gesture={gesture} onEdit={onEdit} />
+      </section>
+      <section className="inspector-group">
+        <h3>Цветокоррекция</h3>
+        <GradingPanel grading={adjust.grading} disabled={disabled} gesture={gesture} onEdit={onEdit} />
+      </section>
+      <section className="inspector-group">
+        <h3>Кривые</h3>
+        <CurveEditor curves={adjust.curves} disabled={disabled} gesture={gesture} onEdit={onEdit} />
+      </section>
     </>
-  );
-}
-
-function format(spec: SliderSpec, value: number): string {
-  const text = spec.key === 'exposure' ? value.toFixed(2) : String(Math.round(value));
-  return value > 0 ? `+${text}` : value < 0 ? `−${text.slice(1)}` : text;
-}
-
-function Slider({
-  spec,
-  value,
-  disabled,
-  onChange,
-  onReset,
-}: {
-  spec: SliderSpec;
-  value: number;
-  disabled: boolean;
-  onChange: (value: number) => void;
-  onReset: () => void;
-}) {
-  return (
-    // Двойной щелчок сбрасывает ползунок в ноль, как в Lightroom.
-    <label className="slider" onDoubleClick={() => !disabled && onReset()}>
-      <span className="slider-label">{spec.label}</span>
-      <output className="slider-value" data-testid={`value-${spec.key}`}>
-        {format(spec, value)}
-      </output>
-      <input
-        type="range"
-        aria-label={spec.label}
-        min={spec.min}
-        max={spec.max}
-        step={spec.step}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(Number(e.currentTarget.value))}
-      />
-    </label>
   );
 }

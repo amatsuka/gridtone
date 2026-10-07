@@ -7,6 +7,7 @@ import { moveSlots, shiftSlots } from '@core/project/order';
 import type { Adjust, Project, Slot } from '@core/project/types';
 import { isValidLookName } from '@core/project/validate';
 import type { MenuCommand } from '@shared/ipc';
+import { isViewMode, type ViewMode } from '@shared/view';
 import { clickSelection, EMPTY_SELECTION, selectAll } from './selection';
 import { editProject, redo, undo, useAppStore, type InspectorTab } from './store';
 
@@ -177,6 +178,18 @@ export function assignLookToSelection(lookId: string | null): void {
   if (ids.length > 0) editProject((draft) => assignLook(draft, ids, lookId));
 }
 
+// ─── Просмотр ───────────────────────────────────────────────────────────────
+
+/** Клавиши 1–7, переключатель в тулбаре и меню «Вид». Режим — состояние интерфейса, не проекта. */
+export function setViewMode(mode: ViewMode): void {
+  if (useAppStore.getState().viewMode !== mode) useAppStore.setState({ viewMode: mode });
+}
+
+/** Удержание `\`: сетка без поправок и образов, пока клавиша нажата. */
+export function setShowOriginal(show: boolean): void {
+  if (useAppStore.getState().showOriginal !== show) useAppStore.setState({ showOriginal: show });
+}
+
 // ─── Меню ───────────────────────────────────────────────────────────────────
 
 /**
@@ -190,6 +203,11 @@ export function runMenuCommand(command: MenuCommand): void {
     return;
   }
   if (!useAppStore.getState().snapshot || useAppStore.getState().groupsDialog) return;
+  if (command.startsWith('view:')) {
+    const mode = command.slice('view:'.length);
+    if (isViewMode(mode)) setViewMode(mode);
+    return;
+  }
   switch (command) {
     case 'undo':
       undo();

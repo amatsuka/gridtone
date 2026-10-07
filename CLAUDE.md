@@ -30,6 +30,8 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
   новое редактируемое поле слота добавляется в EDITABLE_SLOT_FIELDS в core/project/patch.ts и в validate.ts.
 - Main добавляет слоты только в конец: на этом держатся индексы в истории отмены (ADR 0011).
 - Прокси строятся только в src/indexer/proxies.ts; pipelineColourspace('srgb') там обязателен (ADR 0004).
+- Режим просмотра — состояние интерфейса, в проект не пишется (ADR 0012). Метрики плиток считает
+  core/metrics/tile.ts, воркер метрик только декодирует прокси: так e2e сверяет заливки с тем же кодом.
 - Новая зависимость — только с записью в docs/decisions/. npm 12 блокирует install-скрипты:
   если пакету он нужен, разрешать осознанно через `npm install-scripts approve <pkg>`.
 - В конце этапа обновить docs/progress.md: что сделано, решения, что дальше.

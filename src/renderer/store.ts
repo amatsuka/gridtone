@@ -4,6 +4,7 @@ import type { AdjustGroup } from '@core/project/adjustGroups';
 import type { ProjectPatch } from '@core/project/patch';
 import type { Adjust, Project } from '@core/project/types';
 import type { ImportProgress, ProjectSnapshot } from '@shared/ipc';
+import type { ViewMode } from '@shared/view';
 import { History } from './history';
 import { EMPTY_SELECTION, pruneSelection, type Selection } from './selection';
 
@@ -36,6 +37,10 @@ interface AppState {
   clipboard: AdjustClipboard | null;
   /** Открытый диалог выбора групп правок. */
   groupsDialog: 'copy' | 'sync' | null;
+  /** Режим просмотра сетки, клавиши 1–7. В проект не пишется (ADR 0012). */
+  viewMode: ViewMode;
+  /** Удерживается `\`: сетка без поправок и образов. */
+  showOriginal: boolean;
 }
 
 export const useAppStore = create<AppState>()(() => ({
@@ -49,6 +54,8 @@ export const useAppStore = create<AppState>()(() => ({
   dragOrder: null,
   clipboard: null,
   groupsDialog: null,
+  viewMode: 'grid',
+  showOriginal: false,
 }));
 
 // Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.

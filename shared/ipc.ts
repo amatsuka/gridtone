@@ -1,6 +1,7 @@
 // Единый контракт IPC. Любой новый канал объявляется здесь и только здесь.
 import type { ProjectPatch } from '@core/project/patch';
 import type { AssetRef, Project } from '@core/project/types';
+import type { ViewMode } from './view';
 
 // ─── renderer ↔ main ────────────────────────────────────────────────────────
 
@@ -48,8 +49,9 @@ export interface PatchBatch {
 /**
  * Команда из меню приложения (docs/decisions/0011-undo-history.md). Те же сочетания renderer ловит сам;
  * меню срабатывает, только если страница сочетание не обработала, или по клику мышью.
+ * `view:<режим>` — пункты меню «Вид» (docs/decisions/0012-view-modes.md): клавиши 1–7 у них только подписи.
  */
-export type MenuCommand = 'undo' | 'redo' | 'selectAll' | 'copyAdjust' | 'pasteAdjust';
+export type MenuCommand = 'undo' | 'redo' | 'selectAll' | 'copyAdjust' | 'pasteAdjust' | `view:${ViewMode}`;
 
 export interface ImportProgress {
   jobId: string;

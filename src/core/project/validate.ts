@@ -17,6 +17,8 @@ const GRID_KEYS = ['cx', 'cy'];
 const LOOK_KEYS = ['id', 'name', 'adjust'];
 
 export const LOOK_NAME_MAX = 100;
+/** Точек в одной кривой — не больше. */
+export const CURVE_MAX_POINTS = 16;
 
 export function isValidAdjust(value: unknown): value is Adjust {
   if (!hasKeys(value, ADJUST_KEYS)) return false;
@@ -78,13 +80,15 @@ export function isValidLookName(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= LOOK_NAME_MAX;
 }
 
-/** Кривая — не меньше двух точек, координаты в 0..1. */
+/** Кривая — от 2 до CURVE_MAX_POINTS точек, координаты в 0..1, x строго растёт. */
 function isCurve(value: unknown): value is Pt[] {
-  return (
-    Array.isArray(value) &&
-    value.length >= 2 &&
-    value.every((p) => Array.isArray(p) && p.length === 2 && inRange(p[0], 0, 1) && inRange(p[1], 0, 1))
-  );
+  if (!Array.isArray(value) || value.length < 2 || value.length > CURVE_MAX_POINTS) return false;
+  let prevX = -Infinity;
+  for (const p of value) {
+    if (!Array.isArray(p) || p.length !== 2 || !inRange(p[0], 0, 1) || !inRange(p[1], 0, 1) || p[0] <= prevX) return false;
+    prevX = p[0];
+  }
+  return true;
 }
 
 function inRange(value: unknown, min: number, max: number): value is number {

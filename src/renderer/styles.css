@@ -64,6 +64,7 @@ button.link {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-height: 44px;
@@ -82,6 +83,8 @@ button.link {
 }
 
 .save-state {
+  /* Ширина не зависит от текста: переключатель режимов не прыгает при сохранении. */
+  min-width: 110px;
   color: var(--muted);
 }
 
@@ -289,12 +292,15 @@ button:disabled {
   margin-top: 24px;
 }
 
+.grid-column {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 3px;
-  max-width: 720px;
-  margin: 0 auto;
   /* Плитки тянутся указателем: ни выделения текста, ни жестов прокрутки браузера. */
   user-select: none;
   touch-action: none;
@@ -415,4 +421,336 @@ button:disabled {
   align-items: center;
   gap: 8px;
   margin-top: 16px;
+}
+
+/* ─── Режимы просмотра (ADR 0012) ─────────────────────────────────────────── */
+
+.view-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg);
+}
+
+.view-switch button {
+  min-width: 26px;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.view-switch button[aria-pressed='true'] {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.view-name {
+  min-width: 96px;
+  padding: 0 6px;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .view-name {
+    display: none;
+  }
+}
+
+.original-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+/* 1 — Профиль: колонка телефона, промежутки 2 px, без номеров, бейджей и рамок. */
+.view-profile .grid-column {
+  max-width: 390px;
+}
+
+.view-profile .grid {
+  gap: 2px;
+}
+
+.view-profile .tile-number,
+.view-profile .tile-badge,
+.view-profile .tile.selected::after {
+  display: none;
+}
+
+.profile-header {
+  padding: 12px 12px 0;
+}
+
+.profile-top {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.profile-avatar {
+  width: 77px;
+  height: 77px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #3a3a3a;
+}
+
+.profile-name {
+  margin-bottom: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.profile-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-counters b {
+  color: var(--text);
+}
+
+.profile-tabs {
+  display: flex;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.profile-tabs span {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 10px 0;
+  color: var(--muted);
+}
+
+.profile-tabs span.active {
+  color: var(--text);
+  box-shadow: inset 0 1px 0 var(--text);
+}
+
+.profile-tabs svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+/* 6 — Прищур: размытый холст, DOM-слой скрыт. Радиус — около 1/8 плитки (GridView). */
+.view-squint .grid-canvas {
+  filter: blur(var(--squint-blur));
+}
+
+.view-squint .tile {
+  background: transparent;
+}
+
+.view-squint .tile > *,
+.view-squint .tile::after {
+  opacity: 0;
+}
+
+/* 5 и 7 — заливка плитки доминантой или цветом отклонения. */
+.tile-fill {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.tile-fill-text {
+  color: rgb(0 0 0 / 75%);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-fill-no-target .tile-fill-text {
+  color: #d0d0d0;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* ─── Панели коррекции ────────────────────────────────────────────────────── */
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 8px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.segmented button {
+  position: relative;
+  flex: 1;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.segmented button[aria-selected='true'] {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+/* Ползунок HSL: дорожка — градиент, который считает core. */
+.slider input.tracked {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  background: transparent;
+}
+
+.slider input.tracked::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--track);
+}
+
+.slider input.tracked::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border: 1px solid rgb(0 0 0 / 60%);
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.slider input.tracked:disabled {
+  opacity: 0.4;
+}
+
+.wheels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.wheel-cell {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+.wheel {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.wheel.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.wheel canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.wheel-dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 60%);
+  pointer-events: none;
+}
+
+.wheel-label {
+  font-size: 12px;
+}
+
+.wheel-value {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.curve-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.curve-toolbar .segmented {
+  flex: 1;
+}
+
+.curve-changed {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.curve-graph {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: visible;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.curve-graph.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.curve-bg {
+  fill: #1b1b1b;
+}
+
+.curve-grid {
+  stroke: #333;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.curve-diagonal {
+  stroke: #444;
+  stroke-dasharray: 4 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.curve-line {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.curve-point {
+  fill: var(--bg);
+  stroke: var(--text);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
 }

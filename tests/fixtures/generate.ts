@@ -71,6 +71,36 @@ export async function writeFixture(dir: string, spec: FixtureSpec): Promise<stri
   return file;
 }
 
+/**
+ * Фото по функции цвета пикселя, без маркера и надписи: рампы и однотонные кадры для проверок цвета.
+ * color получает координаты 0..1 и возвращает sRGB 0..255. JPEG q95 без прореживания цветности.
+ */
+export async function writePixelFixture(
+  dir: string,
+  name: string,
+  width: number,
+  height: number,
+  color: (u: number, v: number) => Rgb,
+): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  const data = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const { r, g, b } = color((x + 0.5) / width, (y + 0.5) / height);
+      const i = (y * width + x) * 3;
+      data[i] = Math.round(r);
+      data[i + 1] = Math.round(g);
+      data[i + 2] = Math.round(b);
+    }
+  }
+  const file = join(dir, `${name}.jpg`);
+  await sharp(data, { raw: { width, height, channels: 3 } })
+    .withIccProfile('srgb')
+    .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+    .toFile(file);
+  return file;
+}
+
 /** Набор для критерия этапа 0: разные форматы, размеры, ориентации и профили. */
 export function importSetSpecs(count = 30): FixtureSpec[] {
   const variants: Omit<FixtureSpec, 'name' | 'color' | 'label'>[] = [

@@ -1,8 +1,18 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron';
 import type { MenuCommand } from '@shared/ipc';
+import { VIEW_MODE_LABELS, VIEW_MODES } from '@shared/view';
 import type { Actions } from './actions';
 
-const PROJECT_ITEM_IDS = ['import', 'save', 'close', 'undo', 'redo', 'copyAdjust', 'pasteAdjust'];
+const PROJECT_ITEM_IDS = [
+  'import',
+  'save',
+  'close',
+  'undo',
+  'redo',
+  'copyAdjust',
+  'pasteAdjust',
+  ...VIEW_MODES.map((mode) => `view:${mode}`),
+];
 
 /**
  * sendCommand передаёт команду в renderer: undo/redo и правки ведёт он (docs/decisions/0011-undo-history.md).
@@ -47,7 +57,29 @@ export function buildMenu(actions: Actions, sendCommand: (command: MenuCommand) 
         command('pasteAdjust', 'Вставить правки', 'CmdOrCtrl+Shift+V'),
       ],
     },
-    { role: 'viewMenu' },
+    {
+      label: 'Вид',
+      submenu: [
+        // Клавиши 1–7 ловит renderer, вне полей ввода. Зарегистрированные в меню, они перехватили бы
+        // цифры и в поле имени образа, поэтому здесь они только подписаны.
+        ...VIEW_MODES.map(
+          (mode, i): MenuItemConstructorOptions => ({
+            ...command(`view:${mode}`, VIEW_MODE_LABELS[mode], String(i + 1)),
+            registerAccelerator: false,
+          }),
+        ),
+        { type: 'separator' },
+        { role: 'reload', label: 'Перезагрузить' },
+        { role: 'forceReload', label: 'Перезагрузить без кэша' },
+        { role: 'toggleDevTools', label: 'Инструменты разработчика' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: 'Фактический размер' },
+        { role: 'zoomIn', label: 'Увеличить' },
+        { role: 'zoomOut', label: 'Уменьшить' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: 'Во весь экран' },
+      ],
+    },
     { role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

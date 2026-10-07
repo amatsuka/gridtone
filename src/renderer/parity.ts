@@ -2,12 +2,13 @@
 // программой, что и сетка, во float-буфер и отдаёт пиксели. Приложение эту страницу не открывает.
 import { bakePipeline, CURVE_TABLE_SIZE, type PipelineParams } from '@core/color/bake';
 import { HSL_TABLE_SIZE } from '@core/color/hsl';
+import type { ViewOutput } from '@core/color/view';
 import { PipelineProgram, TEXTURE_UNIT } from './gl/program';
 import { TableAtlas } from './gl/tables';
 
 export interface ParityApi {
-  /** RGBA 8 бит (base64) → RGBA float32 (base64), строки сверху вниз, как во входе. */
-  render(width: number, height: number, rgba8: string, params: PipelineParams): string;
+  /** RGBA 8 бит (base64) → RGBA float32 (base64), строки сверху вниз, как во входе. view — режим 3 или 4. */
+  render(width: number, height: number, rgba8: string, params: PipelineParams, view?: ViewOutput): string;
 }
 
 declare global {
@@ -25,7 +26,7 @@ const curves = new TableAtlas(gl, CURVE_TABLE_SIZE);
 const hsl = new TableAtlas(gl, HSL_TABLE_SIZE);
 
 window.gridtoneParity = {
-  render(width, height, rgba8, params) {
+  render(width, height, rgba8, params, view = 'color') {
     const source = texture(gl.RGBA8, width, height, gl.RGBA, gl.UNSIGNED_BYTE, fromBase64(rgba8));
     const target = texture(gl.RGBA32F, width, height, gl.RGBA, gl.FLOAT, null);
     const framebuffer = gl.createFramebuffer();
@@ -49,6 +50,7 @@ window.gridtoneParity = {
     curves.bind(TEXTURE_UNIT.curves);
     hsl.bind(TEXTURE_UNIT.hsl);
     program.setPasses(passes);
+    program.setView(view);
     program.setGeometry([0, 0, width, height], [width, height], [1, 0, 0, 0, 1, 0]);
     program.draw();
 

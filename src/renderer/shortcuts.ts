@@ -1,8 +1,9 @@
 // Горячие клавиши сетки и команды меню. Клавиши — по event.code: иначе в русской раскладке
 // ⌘Z пришёл бы как «я». Обработанное сочетание гасится preventDefault, и меню его уже не получит
 // (docs/decisions/0011-undo-history.md).
+import { VIEW_MODES, type ViewMode } from '@shared/view';
 import { api, endGesture, useAppStore } from './store';
-import { clearSelection, isTextField, runMenuCommand, shiftSelection } from './commands';
+import { clearSelection, isTextField, runMenuCommand, setShowOriginal, setViewMode, shiftSelection } from './commands';
 
 const COLUMNS = 3;
 
@@ -13,6 +14,17 @@ const SHIFT_BY_ARROW: Record<string, number> = {
   ArrowDown: COLUMNS,
 };
 
+/** Digit1…Digit7 и те же цифры на цифровом блоке → режим просмотра. */
+const VIEW_BY_CODE: Record<string, ViewMode> = Object.fromEntries(
+  VIEW_MODES.flatMap((mode, i) => [
+    [`Digit${i + 1}`, mode],
+    [`Numpad${i + 1}`, mode],
+  ]),
+);
+
+/** До/после — удержание `\`. По event.code, как и остальные: символ на этой клавише зависит от раскладки. */
+const ORIGINAL_CODE = 'Backslash';
+
 function onKeyDown(event: KeyboardEvent): void {
   const { snapshot, groupsDialog } = useAppStore.getState();
   // Диалог групп обрабатывает клавиши сам.
@@ -22,6 +34,8 @@ function onKeyDown(event: KeyboardEvent): void {
   // Стрелки в ползунке и выпадающем списке двигают их, а не плитки.
   const control = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || text;
   const delta = SHIFT_BY_ARROW[event.code];
+  const view = VIEW_BY_CODE[event.code];
+  const plain = !mod && !event.altKey && !event.shiftKey;
 
   if (mod && !event.altKey && event.code === 'KeyZ' && !text) {
     runMenuCommand(event.shiftKey ? 'redo' : 'undo');
@@ -35,6 +49,10 @@ function onKeyDown(event: KeyboardEvent): void {
     clearSelection();
   } else if (event.shiftKey && !mod && !event.altKey && delta !== undefined && !control) {
     shiftSelection(delta);
+  } else if (plain && view !== undefined && !text && !(event.target instanceof HTMLSelectElement)) {
+    setViewMode(view);
+  } else if (plain && event.code === ORIGINAL_CODE && !text) {
+    setShowOriginal(true);
   } else {
     return;
   }
@@ -45,12 +63,21 @@ function onKeyDown(event: KeyboardEvent): void {
 export function connectShortcuts(): () => void {
   // Любое отпускание кнопки мыши или клавиши заканчивает жест: следующая правка — новая запись истории.
   const onRelease = () => endGesture();
+  const onKeyUp = (event: KeyboardEvent) => {
+    if (event.code === ORIGINAL_CODE) setShowOriginal(false);
+  };
+  // Окно потеряло фокус с зажатой `\`: keyup уже не придёт.
+  const onBlur = () => setShowOriginal(false);
   window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
   window.addEventListener('pointerup', onRelease, true);
   window.addEventListener('keyup', onRelease, true);
   const offMenu = api.on('menu:command', runMenuCommand);
   return () => {
     window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('blur', onBlur);
     window.removeEventListener('pointerup', onRelease, true);
     window.removeEventListener('keyup', onRelease, true);
     offMenu();

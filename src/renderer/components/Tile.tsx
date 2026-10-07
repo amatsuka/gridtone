@@ -3,6 +3,16 @@ import type { Slot } from '@core/project/types';
 import { proxyUrl } from '@shared/cache';
 import type { AssetStatus } from '@shared/ipc';
 
+/** Заливка DOM-слоя в режимах 5 и 7 (ADR 0012): закрывает фото на холсте. */
+export interface TileOverlay {
+  kind: 'dominant' | 'deviation' | 'no-target';
+  /** CSS-цвет заливки. */
+  color: string;
+  text?: string;
+  /** Отклонение от цели в долях допуска. */
+  value?: number;
+}
+
 const ORIGINAL_HINT: Record<Exclude<AssetStatus['original'], 'ok'>, string> = {
   missing: 'Оригинал не найден по сохранённому пути',
   changed: 'Оригинал изменился после импорта',
@@ -21,6 +31,7 @@ export const Tile = memo(function Tile({
   selected,
   primary,
   renderMode,
+  overlay,
 }: {
   slot: Slot;
   index: number;
@@ -29,6 +40,7 @@ export const Tile = memo(function Tile({
   /** Основная плитка выделения: её правят ползунки. */
   primary: boolean;
   renderMode: 'gl' | 'img';
+  overlay: TileOverlay | undefined;
 }) {
   const { assetId } = slot;
   const original = status?.original ?? 'ok';
@@ -55,6 +67,17 @@ export const Tile = memo(function Tile({
       )}
       {!ready && (
         <div className="tile-placeholder">{status?.proxy === 'pending' ? 'Готовим превью…' : assetId ? 'Нет превью' : ''}</div>
+      )}
+      {overlay && (
+        <div
+          className={`tile-fill tile-fill-${overlay.kind}`}
+          data-testid="tile-fill"
+          data-kind={overlay.kind}
+          data-value={overlay.value}
+          style={{ backgroundColor: overlay.color }}
+        >
+          {overlay.text !== undefined && <span className="tile-fill-text">{overlay.text}</span>}
+        </div>
       )}
       <span className="tile-number">{index + 1}</span>
       {original !== 'ok' && (

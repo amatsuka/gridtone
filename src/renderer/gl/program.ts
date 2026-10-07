@@ -6,6 +6,7 @@ import { HSL_CHROMA_FADE, HSL_TABLE_SIZE } from '@core/color/hsl';
 import { LAB_TO_LMS, LINEAR_SRGB_TO_LMS, LMS_TO_LAB, LMS_TO_LINEAR_SRGB } from '@core/color/oklab';
 import { LUMINANCE, type Mat3 } from '@core/color/srgb';
 import { TONE_MIN_Y } from '@core/color/tone';
+import { POSTERIZE_LEVELS, VIEW_OUTPUT_CODES, type ViewOutput } from '@core/color/view';
 import type { Affine } from '@core/project/crop';
 import FRAGMENT from './pipeline.frag.glsl?raw';
 import VERTEX from './pipeline.vert.glsl?raw';
@@ -48,18 +49,19 @@ export class PipelineProgram {
   private readonly vao: WebGLVertexArrayObject;
   private readonly buffer: WebGLBuffer;
   private readonly passes: Record<PassField, WebGLUniformLocation | null>[];
-  private readonly uniforms: Record<'rect' | 'canvas' | 'uv' | 'passCount', WebGLUniformLocation | null>;
+  private readonly uniforms: Record<'rect' | 'canvas' | 'uv' | 'passCount' | 'view', WebGLUniformLocation | null>;
 
   constructor(private readonly gl: WebGL2RenderingContext) {
     this.program = link(gl, compile(gl, gl.VERTEX_SHADER, VERTEX), compile(gl, gl.FRAGMENT_SHADER, withConstants(FRAGMENT)));
     const at = (name: string) => gl.getUniformLocation(this.program, name);
     this.passes = [0, 1].map((i) => Object.fromEntries(PASS_FIELDS.map((f) => [f, at(`uPass[${i}].${f}`)])) as Record<PassField, WebGLUniformLocation | null>);
-    this.uniforms = { rect: at('uRect'), canvas: at('uCanvas'), uv: at('uUv'), passCount: at('uPassCount') };
+    this.uniforms = { rect: at('uRect'), canvas: at('uCanvas'), uv: at('uUv'), passCount: at('uPassCount'), view: at('uView') };
 
     gl.useProgram(this.program);
     gl.uniform1i(at('uImage'), TEXTURE_UNIT.image);
     gl.uniform1i(at('uCurves'), TEXTURE_UNIT.curves);
     gl.uniform1i(at('uHsl'), TEXTURE_UNIT.hsl);
+    gl.uniform1i(this.uniforms.view, VIEW_OUTPUT_CODES.color);
 
     // Один квадрат на все плитки: углы 0..1, полосой из двух треугольников.
     this.vao = gl.createVertexArray();
@@ -114,6 +116,11 @@ export class PipelineProgram {
     });
   }
 
+  /** Пост-обработка после проходов: режимы просмотра 3 и 4 (src/core/color/view.ts). */
+  setView(view: ViewOutput): void {
+    this.gl.uniform1i(this.uniforms.view, VIEW_OUTPUT_CODES[view]);
+  }
+
   /** Плитка: прямоугольник в пикселях холста и отображение плитки в координаты фото. */
   setGeometry(rect: readonly [number, number, number, number], canvas: readonly [number, number], uv: Affine): void {
     const gl = this.gl;
@@ -150,6 +157,10 @@ function withConstants(source: string): string {
     `const mat3 LMS_TO_LINEAR_SRGB = ${mat3(LMS_TO_LINEAR_SRGB)};`,
     `const mat3 LMS_TO_LAB = ${mat3(LMS_TO_LAB)};`,
     `const mat3 LAB_TO_LMS = ${mat3(LAB_TO_LMS)};`,
+    `#define VIEW_COLOR ${VIEW_OUTPUT_CODES.color}`,
+    `#define VIEW_LUMINANCE ${VIEW_OUTPUT_CODES.luminance}`,
+    `#define VIEW_POSTERIZE ${VIEW_OUTPUT_CODES.posterize}`,
+    `#define POSTERIZE_LEVELS ${POSTERIZE_LEVELS}`,
   ].join('\n');
   if (!source.includes('//#constants')) throw new Error('В шейдере нет места для констант');
   return source.replace('//#constants', constants);

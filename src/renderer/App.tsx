@@ -4,12 +4,14 @@ import { GroupsDialog } from './components/GroupsDialog';
 import { ImportStatus } from './components/ImportStatus';
 import { Inspector } from './components/Inspector';
 import { Toolbar } from './components/Toolbar';
+import { connectMetrics } from './metrics';
 import { connectShortcuts } from './shortcuts';
 import { api, connectStore, useAppStore } from './store';
 
 export function App() {
   useEffect(() => connectStore(), []);
   useEffect(() => connectShortcuts(), []);
+  useEffect(() => connectMetrics(), []);
   const ready = useAppStore((state) => state.ready);
   const snapshot = useAppStore((state) => state.snapshot);
 
