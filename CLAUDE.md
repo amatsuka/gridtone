@@ -25,8 +25,10 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
 - Все каналы IPC объявлены в shared/ipc.ts; renderer не трогает fs напрямую.
 - Оригиналы фото никогда не перезаписываются.
 - Проект меняется только через ProjectSession.update в main, иначе изменение не попадёт в автосохранение.
-  Renderer правит проект только через editProject (store.ts): патчи уходят в main по project:patch (ADR 0008);
-  новое редактируемое поле добавляется в разрешённые пути core/project/patch.ts и в validate.ts.
+  Renderer правит проект только через editProject (store.ts): патчи уходят в main по project:patch (ADR 0008),
+  main проверяет их по инвариантам (ADR 0010), отмена — на обратных патчах (ADR 0011);
+  новое редактируемое поле слота добавляется в EDITABLE_SLOT_FIELDS в core/project/patch.ts и в validate.ts.
+- Main добавляет слоты только в конец: на этом держатся индексы в истории отмены (ADR 0011).
 - Прокси строятся только в src/indexer/proxies.ts; pipelineColourspace('srgb') там обязателен (ADR 0004).
 - Новая зависимость — только с записью в docs/decisions/. npm 12 блокирует install-скрипты:
   если пакету он нужен, разрешать осознанно через `npm install-scripts approve <pkg>`.

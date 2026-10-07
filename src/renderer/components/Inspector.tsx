@@ -1,119 +1,198 @@
+import { useEffect, useRef, useState } from 'react';
 import { createAdjust } from '@core/project/defaults';
-import type { Adjust, Slot } from '@core/project/types';
-import { editProject, useAppStore } from '../store';
+import { lookUsage } from '@core/project/looks';
+import type { Look, Project, Slot } from '@core/project/types';
+import { LOOK_NAME_MAX } from '@core/project/validate';
+import {
+  assignLookToSelection,
+  duplicateLookById,
+  editLookAdjust,
+  editSlotAdjust,
+  newLook,
+  openGroupsDialog,
+  removeLookById,
+  renameLook,
+  setActiveLook,
+  setInspectorTab,
+} from '../commands';
+import { useAppStore, type InspectorTab } from '../store';
+import { AdjustPanel } from './AdjustPanel';
 
-type SliderKey = 'exposure' | 'temp' | 'tint' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks' | 'vibrance' | 'saturation';
-
-interface SliderSpec {
-  key: SliderKey;
-  label: string;
-  min: number;
-  max: number;
-  step: number;
-}
-
-const percent = (key: SliderKey, label: string): SliderSpec => ({ key, label, min: -100, max: 100, step: 1 });
-
-// Порядок как в Lightroom: баланс белого, тон, присутствие.
-const GROUPS: { title: string; sliders: SliderSpec[] }[] = [
-  { title: 'Баланс белого', sliders: [percent('temp', 'Температура'), percent('tint', 'Оттенок')] },
-  {
-    title: 'Тон',
-    sliders: [
-      { key: 'exposure', label: 'Экспозиция', min: -3, max: 3, step: 0.05 },
-      percent('contrast', 'Контраст'),
-      percent('highlights', 'Света'),
-      percent('shadows', 'Тени'),
-      percent('whites', 'Белые'),
-      percent('blacks', 'Чёрные'),
-    ],
-  },
-  { title: 'Цвет', sliders: [percent('vibrance', 'Сочность'), percent('saturation', 'Насыщенность')] },
+const TABS: { id: InspectorTab; label: string }[] = [
+  { id: 'photo', label: 'Фото' },
+  { id: 'look', label: 'Образ' },
 ];
 
-/** Правка поправки фото у слота: ищем по id, а не по индексу — порядок мог поменяться. */
-function editAdjust(slotId: string, change: (adjust: Adjust) => void): void {
-  editProject((project) => {
-    const slot = project.slots.find((s) => s.id === slotId);
-    if (slot) change(slot.adjust);
-  });
-}
-
-function format(spec: SliderSpec, value: number): string {
-  const text = spec.key === 'exposure' ? value.toFixed(2) : String(Math.round(value));
-  return value > 0 ? `+${text}` : value < 0 ? `−${text.slice(1)}` : text;
-}
-
+/** Правая панель: поправка основной плитки и образы проекта (spec, «Коррекция в два уровня»). */
 export function Inspector() {
-  const slot = useAppStore((state) => state.snapshot?.project.slots.find((s) => s.id === state.selectedSlotId));
+  const tab = useAppStore((state) => state.inspectorTab);
+  const project = useAppStore((state) => state.snapshot?.project);
+  const selection = useAppStore((state) => state.selection);
+  const primary = project?.slots.find((slot) => slot.id === selection.primary);
 
   return (
     <aside className="inspector" data-testid="inspector">
-      {slot ? <SlotAdjust slot={slot} /> : <p className="muted">Выберите плитку, чтобы править её цвет.</p>}
+      <div className="tabs" role="tablist">
+        {TABS.map(({ id, label }) => (
+          <button key={id} role="tab" aria-selected={tab === id} onClick={() => setInspectorTab(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {project &&
+        (tab === 'photo' ? (
+          <PhotoTab slot={primary} selectedCount={selection.ids.length} />
+        ) : (
+          <LookTab project={project} primary={primary} selectedIds={selection.ids} />
+        ))}
     </aside>
   );
 }
 
-function SlotAdjust({ slot }: { slot: Slot }) {
+function PhotoTab({ slot, selectedCount }: { slot: Slot | undefined; selectedCount: number }) {
+  if (!slot) return <p className="muted">Выберите плитку, чтобы править её цвет.</p>;
   // Опубликованные посты только участвуют в анализе (spec, «Статусы позиций»).
   const locked = slot.state === 'published' || !slot.assetId;
-  const { adjust } = slot;
 
   return (
     <>
       <header className="inspector-header">
         <h2>Поправка фото</h2>
-        <button className="link" disabled={locked} onClick={() => editAdjust(slot.id, (a) => Object.assign(a, createAdjust()))}>
+        <button className="link" disabled={locked} onClick={() => editSlotAdjust(slot.id, (a) => Object.assign(a, createAdjust()))}>
           Сбросить
         </button>
       </header>
+      {selectedCount > 1 && (
+        <div className="inspector-note">
+          <span>
+            Выделено {selectedCount} {plural(selectedCount, 'плитка', 'плитки', 'плиток')}. Ползунки правят основную.
+          </span>
+          <button onClick={() => openGroupsDialog('sync')}>Синхронизировать…</button>
+        </div>
+      )}
       {locked && <p className="muted">{slot.assetId ? 'Опубликованный пост не редактируется.' : 'В позиции нет фото.'}</p>}
-      {GROUPS.map((group) => (
-        <section key={group.title} className="inspector-group">
-          <h3>{group.title}</h3>
-          {group.sliders.map((spec) => (
-            <Slider
-              key={spec.key}
-              spec={spec}
-              value={adjust[spec.key]}
-              disabled={locked}
-              onChange={(value) => editAdjust(slot.id, (a) => void (a[spec.key] = value))}
-            />
-          ))}
-        </section>
-      ))}
+      <AdjustPanel
+        adjust={slot.adjust}
+        disabled={locked}
+        gesture={`slot:${slot.id}`}
+        onEdit={(change, gesture) => editSlotAdjust(slot.id, change, gesture)}
+      />
     </>
   );
 }
 
-function Slider({
-  spec,
-  value,
-  disabled,
-  onChange,
-}: {
-  spec: SliderSpec;
-  value: number;
-  disabled: boolean;
-  onChange: (value: number) => void;
-}) {
+function LookTab({ project, primary, selectedIds }: { project: Project; primary: Slot | undefined; selectedIds: readonly string[] }) {
+  const activeLookId = useAppStore((state) => state.activeLookId);
+  const { looks } = project;
+  const look = looks.find((l) => l.id === activeLookId) ?? looks[0];
+
   return (
-    // Двойной щелчок сбрасывает ползунок в ноль, как в Lightroom.
-    <label className="slider" onDoubleClick={() => !disabled && onChange(0)}>
-      <span className="slider-label">{spec.label}</span>
-      <output className="slider-value" data-testid={`value-${spec.key}`}>
-        {format(spec, value)}
-      </output>
-      <input
-        type="range"
-        aria-label={spec.label}
-        min={spec.min}
-        max={spec.max}
-        step={spec.step}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(Number(e.currentTarget.value))}
-      />
-    </label>
+    <>
+      <header className="inspector-header">
+        <h2>Образ</h2>
+      </header>
+      {look && (
+        <select className="look-select" aria-label="Образ" value={look.id} onChange={(e) => setActiveLook(e.currentTarget.value)}>
+          {looks.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name} · {lookUsage(project, l.id)}
+            </option>
+          ))}
+        </select>
+      )}
+      <div className="button-row">
+        <button onClick={() => newLook(false)}>Новый образ</button>
+        <button disabled={!primary?.assetId} onClick={() => newLook(true)} title="Образ с копией поправки основной плитки">
+          Из поправки фото
+        </button>
+      </div>
+      {look ? (
+        <LookEditor look={look} project={project} selectedIds={selectedIds} />
+      ) : (
+        <p className="muted">Образов пока нет. Образ — общая обработка для группы плиток, она накладывается поверх поправки фото.</p>
+      )}
+    </>
   );
+}
+
+function LookEditor({ look, project, selectedIds }: { look: Look; project: Project; selectedIds: readonly string[] }) {
+  const usage = lookUsage(project, look.id);
+  const selected = new Set(selectedIds);
+  const selectionHasLook = project.slots.some((slot) => selected.has(slot.id) && slot.lookId !== undefined);
+
+  return (
+    <>
+      <label className="field">
+        <span>Имя</span>
+        <LookNameInput key={look.id} look={look} />
+      </label>
+      <p className="muted" data-testid="look-usage">
+        {usage === 0 ? 'Не применён ни к одной плитке' : `Применён к ${usage} ${usage % 10 === 1 && usage % 100 !== 11 ? 'плитке' : 'плиткам'}`}
+      </p>
+      <div className="button-row">
+        <button disabled={selectedIds.length === 0} onClick={() => assignLookToSelection(look.id)}>
+          Назначить выделенным
+        </button>
+        <button disabled={!selectionHasLook} onClick={() => assignLookToSelection(null)}>
+          Снять с выделенных
+        </button>
+      </div>
+      <div className="button-row">
+        <button onClick={() => duplicateLookById(look.id)}>Дублировать</button>
+        <button onClick={() => removeLookById(look.id)}>Удалить</button>
+      </div>
+      <header className="inspector-header inspector-subheader">
+        <h3>Коррекция образа</h3>
+        <button className="link" onClick={() => editLookAdjust(look.id, (a) => Object.assign(a, createAdjust()))}>
+          Сбросить
+        </button>
+      </header>
+      <AdjustPanel
+        adjust={look.adjust}
+        disabled={false}
+        gesture={`look:${look.id}`}
+        onEdit={(change, gesture) => editLookAdjust(look.id, change, gesture)}
+      />
+    </>
+  );
+}
+
+/** Имя применяется при выходе из поля или по Enter; Esc и пустое имя возвращают прежнее. */
+function LookNameInput({ look }: { look: Look }) {
+  const [draft, setDraft] = useState(look.name);
+  const cancelled = useRef(false);
+  // Отмена и повтор переименования приходят снаружи.
+  useEffect(() => setDraft(look.name), [look.name]);
+
+  return (
+    <input
+      type="text"
+      aria-label="Имя образа"
+      value={draft}
+      maxLength={LOOK_NAME_MAX}
+      onChange={(e) => setDraft(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') {
+          cancelled.current = true;
+          setDraft(look.name);
+          e.currentTarget.blur();
+        }
+      }}
+      onBlur={() => {
+        if (cancelled.current || draft.trim() === '') setDraft(look.name);
+        else renameLook(look.id, draft);
+        cancelled.current = false;
+      }}
+    />
+  );
+}
+
+/** 1 плитка, 2 плитки, 5 плиток. */
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }

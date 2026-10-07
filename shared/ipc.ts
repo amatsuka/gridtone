@@ -35,7 +35,8 @@ export interface ProjectStatus {
 }
 
 /**
- * Правка проекта из renderer (docs/decisions/0008-edit-flow.md): патчи Immer к коррекции и кадру слотов.
+ * Правка проекта из renderer (docs/decisions/0008-edit-flow.md): патчи Immer к слотам и образам,
+ * которые main проверяет по инвариантам (docs/decisions/0010-patch-invariants.md).
  * seq растёт с каждым пакетом; dir не даёт применить пакет к проекту, открытому после отправки.
  */
 export interface PatchBatch {
@@ -43,6 +44,12 @@ export interface PatchBatch {
   seq: number;
   patches: ProjectPatch[];
 }
+
+/**
+ * Команда из меню приложения (docs/decisions/0011-undo-history.md). Те же сочетания renderer ловит сам;
+ * меню срабатывает, только если страница сочетание не обработала, или по клику мышью.
+ */
+export type MenuCommand = 'undo' | 'redo' | 'selectAll' | 'copyAdjust' | 'pasteAdjust';
 
 export interface ImportProgress {
   jobId: string;
@@ -73,6 +80,7 @@ export interface EventMap {
   'project:changed': ProjectSnapshot | null;
   'project:status': ProjectStatus;
   'import:progress': ImportProgress;
+  'menu:command': MenuCommand;
 }
 
 export type InvokeChannel = keyof InvokeMap;
@@ -95,6 +103,7 @@ const eventChannels = {
   'project:changed': true,
   'project:status': true,
   'import:progress': true,
+  'menu:command': true,
 } satisfies Record<EventChannel, true>;
 
 export const INVOKE_CHANNELS = Object.keys(invokeChannels) as InvokeChannel[];

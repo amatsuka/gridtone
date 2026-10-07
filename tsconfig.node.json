@@ -10,6 +10,8 @@
     "src/preload/**/*",
     "src/indexer/**/*",
     "src/core/**/*",
+    "src/renderer/history.ts",
+    "src/renderer/selection.ts",
     "shared/**/*",
     "tests/**/*",
     "electron.vite.config.ts",

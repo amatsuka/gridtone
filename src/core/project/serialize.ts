@@ -9,7 +9,7 @@ export function serializeProject(project: Project): string {
 }
 
 /**
- * Разбирает project.json и проверяет структуру верхнего уровня, ассеты и слоты.
+ * Разбирает project.json и проверяет структуру верхнего уровня, ассеты, образы и слоты.
  * Поля коррекции и целей пока не проверяются — их пишет только само приложение.
  */
 export function parseProject(text: string): Project {
@@ -54,6 +54,17 @@ export function parseProject(text: string): Project {
     }
   }
 
+  const looks = data['looks'];
+  if (!Array.isArray(looks)) fail('нет списка образов');
+  const lookIds = new Set<string>();
+  for (const look of looks) {
+    if (!isRecord(look) || typeof look['id'] !== 'string' || typeof look['name'] !== 'string' || !isRecord(look['adjust'])) {
+      fail('некорректный образ');
+    }
+    if (lookIds.has(look['id'])) fail(`повторяется образ ${look['id']}`);
+    lookIds.add(look['id']);
+  }
+
   const slots = data['slots'];
   if (!Array.isArray(slots)) fail('нет списка слотов');
   const slotIds = new Set<string>();
@@ -76,9 +87,11 @@ export function parseProject(text: string): Project {
     if (assetId !== undefined && (typeof assetId !== 'string' || !(assetId in assets))) {
       fail(`слот ${id} ссылается на неизвестный ассет`);
     }
+    const lookId = slot['lookId'];
+    if (lookId !== undefined && (typeof lookId !== 'string' || !lookIds.has(lookId))) {
+      fail(`слот ${id} ссылается на неизвестный образ`);
+    }
   }
-
-  if (!Array.isArray(data['looks'])) fail('нет списка образов');
 
   return data as unknown as Project;
 }

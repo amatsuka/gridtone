@@ -1,6 +1,7 @@
-// Проверка коррекции и кадра: они приходят из renderer патчами и должны оставаться в своих пределах.
+// Проверка коррекции, кадра и образов: они приходят из renderer патчами и должны оставаться в своих пределах.
 import { HUE_BANDS } from './defaults';
-import type { Adjust, Crop, Pt } from './types';
+import { isRecord } from './json';
+import type { Adjust, Crop, Look, Pt } from './types';
 
 const SLIDERS_100 = ['temp', 'tint', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const;
 const FEED_ASPECTS: readonly unknown[] = ['4:5', '3:4', '1:1'];
@@ -13,6 +14,9 @@ const WHEEL_KEYS = ['hue', 'amount'];
 const CURVES_KEYS = ['master', 'r', 'g', 'b'];
 const FEED_KEYS = ['aspect', 'cx', 'cy', 'zoom', 'angle'];
 const GRID_KEYS = ['cx', 'cy'];
+const LOOK_KEYS = ['id', 'name', 'adjust'];
+
+export const LOOK_NAME_MAX = 100;
 
 export function isValidAdjust(value: unknown): value is Adjust {
   if (!hasKeys(value, ADJUST_KEYS)) return false;
@@ -54,6 +58,26 @@ export function isValidCrop(value: unknown): value is Crop {
   );
 }
 
+/** Образ — ровно { id, name, adjust } и, возможно, importedLut. */
+export function isValidLook(value: unknown): value is Look {
+  if (!isRecord(value)) return false;
+  const withLut = Object.hasOwn(value, 'importedLut');
+  return (
+    hasKeys(value, withLut ? [...LOOK_KEYS, 'importedLut'] : LOOK_KEYS) &&
+    typeof value['id'] === 'string' &&
+    value['id'].length > 0 &&
+    value['id'].length <= LOOK_NAME_MAX &&
+    isValidLookName(value['name']) &&
+    isValidAdjust(value['adjust']) &&
+    (!withLut || typeof value['importedLut'] === 'string')
+  );
+}
+
+/** Имя образа: не пустое и не из одних пробелов, не длиннее LOOK_NAME_MAX. */
+export function isValidLookName(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= LOOK_NAME_MAX;
+}
+
 /** Кривая — не меньше двух точек, координаты в 0..1. */
 function isCurve(value: unknown): value is Pt[] {
   return (
@@ -65,10 +89,6 @@ function isCurve(value: unknown): value is Pt[] {
 
 function inRange(value: unknown, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Объект ровно с этими собственными полями. */

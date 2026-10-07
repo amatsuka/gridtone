@@ -32,6 +32,8 @@ export function GridCanvas({
     sync();
     const unsubscribe = useAppStore.subscribe((state, prev) => {
       if (state.snapshot !== prev.snapshot) sync(state.snapshot);
+      // Превью перетаскивания переставляет плитки в DOM, холст рисует их на новых местах.
+      else if (state.dragOrder !== prev.dragOrder) renderer.requestRender();
     });
 
     const render = () => renderer.requestRender();

@@ -223,6 +223,33 @@ describe('правки из renderer', () => {
     expect(saved.slots[0]?.adjust).toEqual({ ...createAdjust(), exposure: 0.5 });
   });
 
+  test('перестановка и образ из renderer доходят до диска', async () => {
+    const dir = join(root, 'p');
+    await projectWithPhoto(dir);
+    service.importFiles(['/ph/b.jpg']);
+    const { job, reply } = indexer.last();
+    reply({ type: 'item', jobId: job.jobId, index: 0, ok: true, asset: asset('/ph/b.jpg', 'bbbbbbbbbbbbbbbb') });
+    const [first, second] = service.snapshot()?.project.slots ?? [];
+    const look = { id: 'look-1', name: 'Образ 1', adjust: { ...createAdjust(), exposure: 1 } };
+
+    service.applyPatches({
+      dir,
+      seq: 1,
+      patches: [
+        { op: 'replace', path: ['slots', 0], value: second },
+        { op: 'replace', path: ['slots', 1], value: first },
+        { op: 'add', path: ['looks', 0], value: look },
+        { op: 'add', path: ['slots', 0, 'lookId'], value: 'look-1' },
+      ],
+    });
+
+    await service.close();
+    const saved = parseProject(await readFile(join(dir, 'project.json'), 'utf8'));
+    expect(saved.slots.map((slot) => slot.assetId)).toEqual(['bbbbbbbbbbbbbbbb', 'aaaaaaaaaaaaaaaa']);
+    expect(saved.slots[0]?.lookId).toBe('look-1');
+    expect(saved.looks).toEqual([look]);
+  });
+
   test('снимок после изменения в main несёт номер последнего применённого пакета', async () => {
     const dir = join(root, 'p');
     await projectWithPhoto(dir);

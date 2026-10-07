@@ -1,12 +1,23 @@
 import { applyPatches, enablePatches, produceWithPatches, type Patch } from 'immer';
 import { create } from 'zustand';
+import type { AdjustGroup } from '@core/project/adjustGroups';
 import type { ProjectPatch } from '@core/project/patch';
-import type { Project } from '@core/project/types';
+import type { Adjust, Project } from '@core/project/types';
 import type { ImportProgress, ProjectSnapshot } from '@shared/ipc';
+import { History } from './history';
+import { EMPTY_SELECTION, pruneSelection, type Selection } from './selection';
 
 export const api = window.gridtone;
 
 enablePatches();
+
+export type InspectorTab = 'photo' | 'look';
+
+/** Скопированные правки: коррекция основной плитки на момент копирования и выбранные группы. */
+export interface AdjustClipboard {
+  adjust: Adjust;
+  groups: readonly AdjustGroup[];
+}
 
 interface AppState {
   /** false, пока не пришёл первый снимок из main. */
@@ -14,30 +25,70 @@ interface AppState {
   /** Проект с правками renderer, которые main, возможно, ещё не подтвердил. */
   snapshot: ProjectSnapshot | null;
   importProgress: ImportProgress | null;
-  selectedSlotId: string | null;
   /** img — WebGL2 недоступен, плитки показываются картинками без коррекции. */
   renderMode: 'gl' | 'img';
+  selection: Selection;
+  inspectorTab: InspectorTab;
+  /** Образ, открытый во вкладке «Образ». */
+  activeLookId: string | null;
+  /** Порядок плиток, пока одну из них тянут: меняется только превью, проект — при отпускании. */
+  dragOrder: readonly string[] | null;
+  clipboard: AdjustClipboard | null;
+  /** Открытый диалог выбора групп правок. */
+  groupsDialog: 'copy' | 'sync' | null;
 }
 
 export const useAppStore = create<AppState>()(() => ({
   ready: false,
   snapshot: null,
   importProgress: null,
-  selectedSlotId: null,
   renderMode: 'gl',
+  selection: EMPTY_SELECTION,
+  inspectorTab: 'photo',
+  activeLookId: null,
+  dragOrder: null,
+  clipboard: null,
+  groupsDialog: null,
 }));
 
-// Поток правок — docs/decisions/0008-edit-flow.md.
+// Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.
 let lastSeq = 0;
 /** Пакеты, отправленные в main, но ещё не вошедшие в пришедший от него снимок. */
 let pending: { seq: number; patches: Patch[] }[] = [];
+const history = new History<Patch>();
 
-/** Правит проект локально, сразу показывает результат и отправляет патчи в main. */
-export function editProject(recipe: (draft: Project) => void): void {
+/**
+ * Правит проект локально, сразу показывает результат, пишет действие в историю и отправляет патчи
+ * в main. Правки с одним ключом gesture склеиваются в одну запись истории, пока жест не закончен.
+ */
+export function editProject(recipe: (draft: Project) => void, gesture?: string): void {
   const { snapshot } = useAppStore.getState();
   if (!snapshot) return;
-  const [project, patches] = produceWithPatches(snapshot.project, recipe);
+  const [project, patches, inverse] = produceWithPatches(snapshot.project, recipe);
   if (patches.length === 0) return;
+  history.record(patches, inverse, gesture);
+  commit(snapshot, project, patches);
+}
+
+/** Жест закончен (отпущена кнопка мыши или клавиша): следующая правка — новая запись истории. */
+export function endGesture(): void {
+  history.endGesture();
+}
+
+export function undo(): void {
+  const { snapshot } = useAppStore.getState();
+  const entry = snapshot ? history.undo() : undefined;
+  if (snapshot && entry) commit(snapshot, applyPatches(snapshot.project, entry.inverse), entry.inverse);
+}
+
+export function redo(): void {
+  const { snapshot } = useAppStore.getState();
+  const entry = snapshot ? history.redo() : undefined;
+  if (snapshot && entry) commit(snapshot, applyPatches(snapshot.project, entry.patches), entry.patches);
+}
+
+/** Показывает новую версию проекта и отправляет патчи в main обычным пакетом. */
+function commit(snapshot: ProjectSnapshot, project: Project, patches: Patch[]): void {
   const seq = ++lastSeq;
   pending.push({ seq, patches });
   useAppStore.setState({ snapshot: { ...snapshot, project } });
@@ -50,13 +101,19 @@ export function editProject(recipe: (draft: Project) => void): void {
 
 async function resync(): Promise<void> {
   pending = [];
+  // Старые патчи истории к проекту main могут не подойти.
+  history.clear();
   receiveSnapshot(await api.invoke('project:get'));
 }
 
 /** Снимок из main + свои пакеты, которых в нём ещё нет. */
 function receiveSnapshot(incoming: ProjectSnapshot | null): void {
   const current = useAppStore.getState();
-  if (!incoming || incoming.dir !== current.snapshot?.dir) pending = [];
+  const sameProject = incoming !== null && incoming.dir === current.snapshot?.dir;
+  if (!sameProject) {
+    pending = [];
+    history.clear();
+  }
   pending = pending.filter((p) => incoming && p.seq > incoming.patchSeq);
   let snapshot = incoming;
   if (snapshot && pending.length > 0) {
@@ -64,14 +121,18 @@ function receiveSnapshot(incoming: ProjectSnapshot | null): void {
     for (const p of pending) project = applyPatches(project, p.patches);
     snapshot = { ...snapshot, project };
   }
-  const selectedSlotId =
-    snapshot && snapshot.project.slots.some((slot) => slot.id === current.selectedSlotId) ? current.selectedSlotId : null;
+  const order = snapshot?.project.slots.map((slot) => slot.id) ?? [];
+  const lookKept = sameProject && snapshot?.project.looks.some((look) => look.id === current.activeLookId);
   useAppStore.setState({
     ready: true,
     snapshot,
-    selectedSlotId,
+    selection: sameProject ? pruneSelection(current.selection, order) : EMPTY_SELECTION,
+    activeLookId: lookKept ? current.activeLookId : null,
+    // Превью перетаскивания пересчитается при следующем движении уже с новыми слотами.
+    dragOrder: null,
+    groupsDialog: sameProject ? current.groupsDialog : null,
     // Прогресс импорта относится к проекту: при смене проекта он больше не нужен.
-    importProgress: snapshot?.dir === current.snapshot?.dir ? current.importProgress : null,
+    importProgress: sameProject ? current.importProgress : null,
   });
 }
 
@@ -92,10 +153,6 @@ export function connectStore(): () => void {
     offStatus();
     offImport();
   };
-}
-
-export function selectSlot(slotId: string | null): void {
-  useAppStore.setState({ selectedSlotId: slotId });
 }
 
 export function dismissImportProgress(): void {

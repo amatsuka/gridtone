@@ -1,10 +1,21 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron';
+import type { MenuCommand } from '@shared/ipc';
 import type { Actions } from './actions';
 
-const PROJECT_ITEM_IDS = ['import', 'save', 'close'];
+const PROJECT_ITEM_IDS = ['import', 'save', 'close', 'undo', 'redo', 'copyAdjust', 'pasteAdjust'];
 
-export function buildMenu(actions: Actions): void {
+/**
+ * sendCommand передаёт команду в renderer: undo/redo и правки ведёт он (docs/decisions/0011-undo-history.md).
+ * В текстовом поле renderer выполняет «Отменить» и «Выделить всё» как правку текста.
+ */
+export function buildMenu(actions: Actions, sendCommand: (command: MenuCommand) => void): void {
   const isMac = process.platform === 'darwin';
+  const command = (id: MenuCommand, label: string, accelerator: string): MenuItemConstructorOptions => ({
+    id,
+    label,
+    accelerator,
+    click: () => sendCommand(id),
+  });
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? [{ role: 'appMenu' } as const] : []),
     {
@@ -20,7 +31,22 @@ export function buildMenu(actions: Actions): void {
         ...(isMac ? [] : [{ type: 'separator' } as const, { role: 'quit' } as const]),
       ],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Правка',
+      submenu: [
+        command('undo', 'Отменить', 'CmdOrCtrl+Z'),
+        command('redo', 'Повторить', 'CmdOrCtrl+Shift+Z'),
+        { type: 'separator' },
+        // Роли нужны текстовым полям: на macOS без них ⌘X, ⌘C и ⌘V в полях не работают.
+        { role: 'cut', label: 'Вырезать' },
+        { role: 'copy', label: 'Копировать' },
+        { role: 'paste', label: 'Вставить' },
+        command('selectAll', 'Выделить всё', 'CmdOrCtrl+A'),
+        { type: 'separator' },
+        command('copyAdjust', 'Копировать правки…', 'CmdOrCtrl+Shift+C'),
+        command('pasteAdjust', 'Вставить правки', 'CmdOrCtrl+Shift+V'),
+      ],
+    },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
   ];

@@ -2,7 +2,6 @@ import { memo } from 'react';
 import type { Slot } from '@core/project/types';
 import { proxyUrl } from '@shared/cache';
 import type { AssetStatus } from '@shared/ipc';
-import { selectSlot } from '../store';
 
 const ORIGINAL_HINT: Record<Exclude<AssetStatus['original'], 'ok'>, string> = {
   missing: 'Оригинал не найден по сохранённому пути',
@@ -11,7 +10,8 @@ const ORIGINAL_HINT: Record<Exclude<AssetStatus['original'], 'ok'>, string> = {
 
 /**
  * Плитка сетки. Само фото рисует GridCanvas под ней; плитка отвечает за заглушку, номер, бейджи
- * и выбор. Когда холст нарисовал фото, GridRenderer ставит плитке data-rendered.
+ * и рамку выделения. Клики и перетаскивание ловит сетка (useTileDrag).
+ * Когда холст нарисовал фото, GridRenderer ставит плитке data-rendered.
  * Без WebGL фото показывается картинкой — без коррекции и кадра.
  */
 export const Tile = memo(function Tile({
@@ -19,12 +19,15 @@ export const Tile = memo(function Tile({
   index,
   status,
   selected,
+  primary,
   renderMode,
 }: {
   slot: Slot;
   index: number;
   status: AssetStatus | undefined;
   selected: boolean;
+  /** Основная плитка выделения: её правят ползунки. */
+  primary: boolean;
   renderMode: 'gl' | 'img';
 }) {
   const { assetId } = slot;
@@ -33,12 +36,12 @@ export const Tile = memo(function Tile({
 
   return (
     <figure
-      className={`tile${selected ? ' selected' : ''}`}
+      className={`tile${selected ? ' selected' : ''}${primary ? ' primary' : ''}`}
       data-testid="tile"
       data-slot-id={slot.id}
       data-asset-id={assetId}
+      data-primary={primary || undefined}
       aria-selected={selected}
-      onClick={() => selectSlot(slot.id)}
     >
       {ready && renderMode === 'img' && (
         <img

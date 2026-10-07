@@ -3,11 +3,11 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { createAdjust } from '../../src/core/project/defaults';
 import type { Project } from '../../src/core/project/types';
 import { writeFixture } from '../fixtures/generate';
-import { expectTilesRendered, launch, stubDialogs, tileColor } from './helpers';
+import { expectTilesRendered, launch, mainProject, press, stubDialogs, tileColor } from './helpers';
 
 let root: string;
 
@@ -26,20 +26,6 @@ const COLORS = [
   { r: 110, g: 110, b: 110 },
   { r: 160, g: 150, b: 90 },
 ];
-
-/** Проект в main: renderer его не подменит, это то, что уйдёт на диск. */
-async function mainProject(page: Page): Promise<Project | undefined> {
-  return page.evaluate(async () => {
-    const api = (globalThis as unknown as { gridtone: { invoke(channel: string): Promise<{ project: Project } | null> } })
-      .gridtone;
-    return (await api.invoke('project:get'))?.project;
-  });
-}
-
-async function press(page: Page, slider: string, key: string, times: number): Promise<void> {
-  await page.getByRole('slider', { name: slider }).focus();
-  for (let i = 0; i < times; i++) await page.keyboard.press(key);
-}
 
 test('ползунок сразу меняет плитку, правки переживают перезапуск', async () => {
   const photos: string[] = [];

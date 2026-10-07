@@ -69,7 +69,7 @@ function registerIpc(): void {
 void app.whenReady().then(() => {
   handleGridtoneProtocol((assetId, size) => service.proxyPath(assetId, size));
   registerIpc();
-  buildMenu(actions);
+  buildMenu(actions, (command) => send(mainWindow, 'menu:command', command));
   setProjectMenuEnabled(false);
   mainWindow = createWindow();
 

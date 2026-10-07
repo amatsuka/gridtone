@@ -1,12 +1,15 @@
 import { useEffect } from 'react';
 import { GridView } from './components/GridView';
+import { GroupsDialog } from './components/GroupsDialog';
 import { ImportStatus } from './components/ImportStatus';
 import { Inspector } from './components/Inspector';
 import { Toolbar } from './components/Toolbar';
+import { connectShortcuts } from './shortcuts';
 import { api, connectStore, useAppStore } from './store';
 
 export function App() {
   useEffect(() => connectStore(), []);
+  useEffect(() => connectShortcuts(), []);
   const ready = useAppStore((state) => state.ready);
   const snapshot = useAppStore((state) => state.snapshot);
 
@@ -25,6 +28,7 @@ export function App() {
             <Welcome />
           ))}
       </main>
+      <GroupsDialog />
     </div>
   );
 }

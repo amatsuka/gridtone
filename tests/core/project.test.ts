@@ -85,6 +85,22 @@ describe('project.json', () => {
     expect(() => parseProject(serializeProject(project))).toThrow(/повторяется слот/);
   });
 
+  test('отклоняет слот со ссылкой на неизвестный образ', () => {
+    const project = sampleProject();
+    project.looks = [];
+    expect(() => parseProject(serializeProject(project))).toThrow(/неизвестный образ/);
+  });
+
+  test('отклоняет повторяющиеся и неполные образы', () => {
+    const project = sampleProject();
+    project.looks.push({ id: 'look-1', name: 'Копия', adjust: createAdjust() });
+    expect(() => parseProject(serializeProject(project))).toThrow(/повторяется образ/);
+
+    const unnamed = JSON.parse(serializeProject(sampleProject())) as { looks: Record<string, unknown>[] };
+    delete unnamed.looks[0]?.['name'];
+    expect(() => parseProject(JSON.stringify(unnamed))).toThrow(/некорректный образ/);
+  });
+
   test('отклоняет ассет, чей ключ не совпадает с id', () => {
     const project = sampleProject();
     const asset = project.assets['0123456789abcdef'];

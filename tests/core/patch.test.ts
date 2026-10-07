@@ -1,6 +1,8 @@
 import { enablePatches, produceWithPatches } from 'immer';
 import { describe, expect, test } from 'vitest';
 import { createAdjust, createProject, createSlot } from '@core/project/defaults';
+import { assignLook, createLook, removeLook } from '@core/project/looks';
+import { moveSlots } from '@core/project/order';
 import { applyProjectPatches, PatchError, type ProjectPatch } from '@core/project/patch';
 import type { Project } from '@core/project/types';
 
@@ -22,12 +24,36 @@ function sampleProject(): Project {
   return project;
 }
 
+/** Проект с тремя слотами и образом, который назначен первому. */
+function projectWithLook(): Project {
+  const project = sampleProject();
+  project.slots.push(createSlot('s3'));
+  project.looks.push(createLook('look-1', 'Тёплый'));
+  project.slots[0]!.lookId = 'look-1';
+  return project;
+}
+
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+/** Правка через Immer, как в renderer, и те же патчи в main: результат обязан совпасть. */
+function roundTrip(base: Project, recipe: (draft: Project) => void): Project {
+  const [next, patches] = produceWithPatches(base, recipe);
+  const target = clone(base);
+  applyProjectPatches(target, patches as ProjectPatch[]);
+  expect(target).toEqual(next);
+  return target;
+}
+
+/** Пакет отвергается и не меняет проект. */
+function expectRejected(project: Project, patches: ProjectPatch[]): void {
+  const before = clone(project);
+  expect(() => applyProjectPatches(project, patches)).toThrow(PatchError);
+  expect(project).toEqual(before);
+}
 
 describe('патчи проекта из renderer', () => {
   test('патчи Immer применяются на месте и дают тот же проект', () => {
-    const base = sampleProject();
-    const [next, patches] = produceWithPatches(base, (draft) => {
+    roundTrip(sampleProject(), (draft) => {
       const slot = draft.slots[0];
       if (!slot) return;
       slot.adjust.exposure = 0.75;
@@ -36,9 +62,6 @@ describe('патчи проекта из renderer', () => {
       slot.adjust.curves.master.splice(1, 0, [0.5, 0.6]);
       slot.crop.grid.cy = 0.3;
     });
-    const target = clone(base);
-    applyProjectPatches(target, patches as ProjectPatch[]);
-    expect(target).toEqual(next);
   });
 
   test('замена всей коррекции слота', () => {
@@ -57,11 +80,9 @@ describe('патчи проекта из renderer', () => {
     [['slots', 5, 'adjust', 'exposure'], 1],
     [['slots', '0', 'adjust', 'exposure'], 1],
     [['grid', 'columns'], 4],
+    [['looks'], {}],
   ] as const)('путь %j запрещён', (path, value) => {
-    const project = sampleProject();
-    const before = clone(project);
-    expect(() => applyProjectPatches(project, [{ op: 'replace', path: [...path], value }])).toThrow(PatchError);
-    expect(project).toEqual(before);
+    expectRejected(sampleProject(), [{ op: 'replace', path: [...path], value }]);
   });
 
   test.each([
@@ -71,24 +92,14 @@ describe('патчи проекта из renderer', () => {
     ['contrast', '10'],
     ['saturation', null],
   ] as const)('значение %s = %j вне допустимого — отказ', (field, value) => {
-    const project = sampleProject();
-    expect(() => applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'adjust', field], value }])).toThrow(
-      PatchError,
-    );
-    expect(project.slots[0]?.adjust).toEqual(createAdjust());
+    expectRejected(sampleProject(), [{ op: 'replace', path: ['slots', 0, 'adjust', field], value }]);
   });
 
   test('некорректная кривая и кадр отвергаются', () => {
     const project = sampleProject();
-    expect(() =>
-      applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'adjust', 'curves', 'r'], value: [[0, 0]] }]),
-    ).toThrow(PatchError);
-    expect(() =>
-      applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'crop', 'feed', 'zoom'], value: 0.5 }]),
-    ).toThrow(PatchError);
-    expect(() =>
-      applyProjectPatches(project, [{ op: 'remove', path: ['slots', 0, 'adjust', 'hsl', 'red'] }]),
-    ).toThrow(PatchError);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'adjust', 'curves', 'r'], value: [[0, 0]] }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'crop', 'feed', 'zoom'], value: 0.5 }]);
+    expectRejected(project, [{ op: 'remove', path: ['slots', 0, 'adjust', 'hsl', 'red'] }]);
   });
 
   test('путь через __proto__ не загрязняет прототип', () => {
@@ -97,33 +108,136 @@ describe('патчи проекта из renderer', () => {
       ['slots', 0, 'adjust', '__proto__', 'polluted'],
       ['slots', 0, 'adjust', 'constructor', 'prototype', 'polluted'],
       ['slots', 0, 'adjust', 'nope', 'polluted'],
+      ['looks', '__proto__', 'polluted'],
     ]) {
-      expect(() => applyProjectPatches(project, [{ op: 'replace', path, value: 1 }])).toThrow(PatchError);
+      expectRejected(project, [{ op: 'replace', path, value: 1 }]);
     }
     expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
   });
 
   test('лишние поля в коррекции и кадре отвергаются', () => {
     const project = sampleProject();
-    expect(() =>
-      applyProjectPatches(project, [{ op: 'add', path: ['slots', 0, 'adjust', 'extra'], value: 1 }]),
-    ).toThrow(PatchError);
-    expect(() =>
-      applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'crop'], value: { ...project.slots[0]?.crop, x: 1 } }]),
-    ).toThrow(PatchError);
-    expect(project.slots[0]?.adjust).toEqual(createAdjust());
+    expectRejected(project, [{ op: 'add', path: ['slots', 0, 'adjust', 'extra'], value: 1 }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'crop'], value: { ...project.slots[0]?.crop, x: 1 } }]);
   });
 
   test('пакет атомарен: при ошибке в одном патче не применяется ни один', () => {
+    expectRejected(sampleProject(), [
+      { op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 1 },
+      { op: 'replace', path: ['slots', 1, 'adjust', 'tint'], value: 30 },
+      { op: 'replace', path: ['slots', 1, 'adjust', 'exposure'], value: 9 },
+    ]);
+  });
+
+  test('старое значение вне пределов не мешает править другие поля', () => {
     const project = sampleProject();
-    const before = clone(project);
-    expect(() =>
-      applyProjectPatches(project, [
-        { op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 1 },
-        { op: 'replace', path: ['slots', 1, 'adjust', 'tint'], value: 30 },
-        { op: 'replace', path: ['slots', 1, 'adjust', 'exposure'], value: 9 },
-      ]),
-    ).toThrow(PatchError);
-    expect(project).toEqual(before);
+    project.slots[1]!.adjust.exposure = 7;
+    applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 1 }]);
+    expect(project.slots[0]?.adjust.exposure).toBe(1);
+  });
+});
+
+describe('инварианты: перестановка', () => {
+  const ids = (project: Project) => project.slots.map((s) => s.id);
+
+  test('перестановка по индексам проходит', () => {
+    const base = projectWithLook();
+    const result = roundTrip(base, (draft) => {
+      const order = moveSlots(base.slots, ['s1'], 2);
+      order.forEach((slot, i) => {
+        if (slot !== base.slots[i]) draft.slots[i] = slot;
+      });
+    });
+    expect(ids(result)).toEqual(['s2', 's3', 's1']);
+    expect(result.slots[2]?.lookId).toBe('look-1');
+  });
+
+  test('замена массива слотов целиком тоже проходит, если состав тот же', () => {
+    const base = projectWithLook();
+    const result = roundTrip(base, (draft) => {
+      draft.slots = [...base.slots].reverse();
+    });
+    expect(ids(result)).toEqual(['s3', 's2', 's1']);
+  });
+
+  test('подмена ассета целым слотом отвергается', () => {
+    const project = projectWithLook();
+    const forged = { ...clone(project.slots[1]!), assetId: 'aaaaaaaaaaaaaaaa', state: 'planned' };
+    expectRejected(project, [{ op: 'replace', path: ['slots', 1], value: forged }]);
+  });
+
+  test('слот с прежним id, но лишним полем, отвергается', () => {
+    const project = projectWithLook();
+    expectRejected(project, [{ op: 'replace', path: ['slots', 1], value: { ...clone(project.slots[1]!), extra: 1 } }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 1, 'target'], value: undefined }]);
+  });
+
+  test('добавление, удаление и повтор слота отвергаются', () => {
+    const project = projectWithLook();
+    expectRejected(project, [{ op: 'add', path: ['slots', 3], value: createSlot('s4') }]);
+    expectRejected(project, [{ op: 'remove', path: ['slots', 2] }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 'length'], value: 2 }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 2], value: clone(project.slots[0]) }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots'], value: [] }]);
+  });
+});
+
+describe('инварианты: образы', () => {
+  test('создание образа и назначение плиткам проходят', () => {
+    const result = roundTrip(sampleProject(), (draft) => {
+      draft.looks.push(createLook('look-2', 'Холодный'));
+      assignLook(draft, ['s1', 's2'], 'look-2');
+    });
+    expect(result.slots.map((s) => s.lookId)).toEqual(['look-2', 'look-2']);
+  });
+
+  test('удаление образа вместе со ссылками проходит', () => {
+    const base = projectWithLook();
+    base.looks.unshift(createLook('look-0', 'Первый'));
+    const result = roundTrip(base, (draft) => removeLook(draft, 'look-1'));
+    expect(result.looks.map((l) => l.id)).toEqual(['look-0']);
+    expect('lookId' in result.slots[0]!).toBe(false);
+  });
+
+  test('удаление образа со ссылками отвергается', () => {
+    const project = projectWithLook();
+    expectRejected(project, [{ op: 'remove', path: ['looks', 0] }]);
+    expectRejected(project, [{ op: 'replace', path: ['looks', 'length'], value: 0 }]);
+  });
+
+  test('ссылка на несуществующий образ отвергается', () => {
+    const project = projectWithLook();
+    expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'lookId'], value: 'nope' }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 1, 'lookId'], value: 42 }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 1, 'lookId'], value: undefined }]);
+  });
+
+  test('повтор id образа отвергается', () => {
+    const project = projectWithLook();
+    expectRejected(project, [{ op: 'add', path: ['looks', 1], value: createLook('look-1', 'Копия') }]);
+  });
+
+  test.each([
+    ['пустое имя', createLook('l', '')],
+    ['имя из пробелов', createLook('l', '   ')],
+    ['длинное имя', createLook('l', 'x'.repeat(101))],
+    ['пустой id', createLook('', 'Образ')],
+    ['лишнее поле', { ...createLook('l', 'Образ'), extra: 1 }],
+    ['коррекция вне пределов', { ...createLook('l', 'Образ'), adjust: { ...createAdjust(), exposure: 5 } }],
+    ['LUT у нового образа', { ...createLook('l', 'Образ'), importedLut: '/x.cube' }],
+  ])('некорректный образ: %s', (_, look) => {
+    expectRejected(sampleProject(), [{ op: 'add', path: ['looks', 0], value: look }]);
+  });
+
+  test('importedLut меняет только main, а остальное в таком образе править можно', () => {
+    const project = projectWithLook();
+    project.looks[0]!.importedLut = '/luts/film.cube';
+    expectRejected(project, [{ op: 'replace', path: ['looks', 0, 'importedLut'], value: '/luts/other.cube' }]);
+    expectRejected(project, [{ op: 'remove', path: ['looks', 0, 'importedLut'] }]);
+    applyProjectPatches(project, [
+      { op: 'replace', path: ['looks', 0, 'name'], value: 'Плёнка' },
+      { op: 'replace', path: ['looks', 0, 'adjust', 'exposure'], value: 0.5 },
+    ]);
+    expect(project.looks[0]).toMatchObject({ name: 'Плёнка', importedLut: '/luts/film.cube', adjust: { exposure: 0.5 } });
   });
 });
