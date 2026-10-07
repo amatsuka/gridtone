@@ -238,6 +238,17 @@ export function setShowOriginal(show: boolean): void {
   if (useAppStore.getState().showOriginal !== show) useAppStore.setState({ showOriginal: show });
 }
 
+// ─── Экспорт ────────────────────────────────────────────────────────────────
+
+/** ⌘⇧E, кнопка «Экспорт» и меню «Файл → Экспорт…». Диалог над всем окном, в том числе над редактором. */
+export function openExportDialog(): void {
+  if (useAppStore.getState().snapshot) useAppStore.setState({ exportOpen: true, groupsDialog: null });
+}
+
+export function closeExportDialog(): void {
+  useAppStore.setState({ exportOpen: false });
+}
+
 // ─── Меню ───────────────────────────────────────────────────────────────────
 
 /**
@@ -250,7 +261,8 @@ export function runMenuCommand(command: MenuCommand): void {
     document.execCommand(command);
     return;
   }
-  if (!useAppStore.getState().snapshot || useAppStore.getState().groupsDialog) return;
+  const { snapshot, groupsDialog, exportOpen } = useAppStore.getState();
+  if (!snapshot || groupsDialog || exportOpen) return;
   if (command.startsWith('view:')) {
     const mode = command.slice('view:'.length);
     if (isViewMode(mode)) setViewMode(mode);
@@ -271,6 +283,9 @@ export function runMenuCommand(command: MenuCommand): void {
       break;
     case 'pasteAdjust':
       pasteAdjust();
+      break;
+    case 'export':
+      openExportDialog();
       break;
   }
 }

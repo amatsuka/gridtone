@@ -1,5 +1,6 @@
-// Точка входа utility process: принимает задачи от main и строит прокси.
-import type { IndexerRequest, IndexerResponse } from '@shared/ipc';
+// Точка входа utility process: принимает задачи от main — строит прокси и экспортирует LUT.
+import type { IndexJob, IndexerRequest, IndexerResponse } from '@shared/ipc';
+import { exportLuts } from './export';
 import { IndexError, errorMessage, indexFile } from './proxies';
 
 const MAX_PARALLEL = 2;
@@ -24,8 +25,22 @@ function pump(): void {
   }
 }
 
+/** Экспорты идут по одному, отдельно от очереди импорта. */
+let exportQueue = Promise.resolve();
+
 port.on('message', (event) => {
-  const job = event.data as IndexerRequest;
+  const request = event.data as IndexerRequest;
+  if (request.type === 'export-lut') {
+    exportQueue = exportQueue.then(() => exportLuts(request, post)).catch((err: unknown) => {
+      post({ type: 'file', jobId: request.jobId, file: '', ok: false, error: errorMessage(err) });
+      post({ type: 'done', jobId: request.jobId });
+    });
+    return;
+  }
+  index(request);
+});
+
+function index(job: IndexJob): void {
   const { jobId, cacheDir, items } = job;
   let left = items.length;
   if (left === 0) {
@@ -45,4 +60,4 @@ port.on('message', (event) => {
     });
   });
   pump();
-});
+}

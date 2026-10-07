@@ -3,6 +3,7 @@
 // цветной объект. Старт детерминирован (k-means++ с постоянным зерном), поэтому одно и то же окно
 // всегда даёт одну и ту же палитру — и в воркере, и в тестах. Модель — docs/decisions/0012-view-modes.md.
 import type { Vec3 } from '../project/types';
+import { mulberry32 } from '../random';
 
 export interface PaletteEntry {
   lab: Vec3;
@@ -196,16 +197,4 @@ function mergeClose(clusters: Cluster[]): Cluster[] {
     result[i] = { L: p.L + q.L, a: p.a + q.a, b: p.b + q.b, weight: p.weight + q.weight };
     result.splice(j, 1);
   }
-}
-
-/** Генератор mulberry32: в core нет Math.random, чтобы результат не зависел от запуска. */
-function mulberry32(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }

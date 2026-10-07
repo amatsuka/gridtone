@@ -920,3 +920,125 @@ button:disabled {
   padding: 2px 6px;
   text-align: right;
 }
+
+/* ─── Экспорт (ADR 0014) ──────────────────────────────────────────────────── */
+
+.export-dialog {
+  width: 560px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.export-section h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 14px 0 6px;
+}
+
+.lut-looks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lut-look {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.lut-look .check {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lut-size {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.lut-size label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.lut-check {
+  grid-column: 1 / -1;
+  padding-left: 24px;
+  font-size: 12px;
+}
+
+.check-line {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 10px;
+}
+
+.check-line.fail > span:first-child {
+  color: var(--danger);
+}
+
+.export-formats {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.export-note {
+  font-size: 12px;
+  margin: 4px 0 8px;
+}
+
+.recipes {
+  font-size: 12px;
+}
+
+.recipes summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.recipes ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.recipes li {
+  margin-bottom: 4px;
+}
+
+.export-result {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.export-result p {
+  margin: 0 0 4px;
+}
+
+.export-path {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.export-files {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.export-error {
+  color: var(--danger);
+  font-size: 12px;
+}

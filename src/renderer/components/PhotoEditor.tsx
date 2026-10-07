@@ -53,6 +53,8 @@ export function PhotoEditor() {
 function EditorView({ snapshot, slot, asset }: { snapshot: ProjectSnapshot; slot: Slot; asset: AssetRef }) {
   const tab = useAppStore((state) => state.editorTab);
   const showOriginal = useAppStore((state) => state.showOriginal);
+  // Под диалогом экспорта редактор не получает ни фокуса, ни кликов.
+  const exportOpen = useAppStore((state) => state.exportOpen);
   const [rotating, setRotating] = useState(false);
   const { project } = snapshot;
   const index = project.slots.indexOf(slot);
@@ -62,7 +64,14 @@ function EditorView({ snapshot, slot, asset }: { snapshot: ProjectSnapshot; slot
   const locked = slot.state === 'published';
 
   return (
-    <div className="photo-editor" role="dialog" aria-label="Редактор фото" data-testid="photo-editor" data-slot-id={slot.id}>
+    <div
+      className="photo-editor"
+      role="dialog"
+      aria-label="Редактор фото"
+      data-testid="photo-editor"
+      data-slot-id={slot.id}
+      inert={exportOpen}
+    >
       <header className="editor-header">
         <button aria-label="Предыдущий пост" title="Предыдущий пост — ←" disabled={photoIndex <= 0} onClick={() => stepEditor(-1)}>
           ←

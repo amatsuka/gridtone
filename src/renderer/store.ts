@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import type { AdjustGroup } from '@core/project/adjustGroups';
 import type { ProjectPatch } from '@core/project/patch';
 import type { Adjust, Project } from '@core/project/types';
-import type { ImportProgress, ProjectSnapshot } from '@shared/ipc';
+import type { ExportProgress, ImportProgress, ProjectSnapshot } from '@shared/ipc';
 import type { ViewMode } from '@shared/view';
 import { History } from './history';
 import { EMPTY_SELECTION, pruneSelection, type Selection } from './selection';
@@ -45,6 +45,10 @@ interface AppState {
   /** Слот, открытый в редакторе фото; null — редактор закрыт. Состояние интерфейса, как и вкладка. */
   editorSlotId: string | null;
   editorTab: EditorTab;
+  /** Открыт диалог «Экспорт» (⌘⇧E, кнопка в тулбаре, меню «Файл»). */
+  exportOpen: boolean;
+  /** Последнее событие экспорта из main: диалог показывает его, если это его задача. */
+  exportProgress: ExportProgress | null;
 }
 
 export const useAppStore = create<AppState>()(() => ({
@@ -62,6 +66,8 @@ export const useAppStore = create<AppState>()(() => ({
   showOriginal: false,
   editorSlotId: null,
   editorTab: 'color',
+  exportOpen: false,
+  exportProgress: null,
 }));
 
 // Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.
@@ -148,6 +154,7 @@ function receiveSnapshot(incoming: ProjectSnapshot | null): void {
     editorSlotId: editorKept ? current.editorSlotId : null,
     // Прогресс импорта относится к проекту: при смене проекта он больше не нужен.
     importProgress: sameProject ? current.importProgress : null,
+    exportOpen: sameProject ? current.exportOpen : false,
   });
 }
 
@@ -162,11 +169,13 @@ export function connectStore(): () => void {
     useAppStore.setState({ snapshot: { ...snapshot, save } });
   });
   const offImport = api.on('import:progress', (importProgress) => useAppStore.setState({ importProgress }));
+  const offExport = api.on('export:progress', (exportProgress) => useAppStore.setState({ exportProgress }));
   void api.invoke('project:get').then(receiveSnapshot);
   return () => {
     offProject();
     offStatus();
     offImport();
+    offExport();
   };
 }
 

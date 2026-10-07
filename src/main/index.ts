@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { createActions } from './actions';
+import { ExportService } from './export';
 import { IndexerClient } from './indexer-client';
 import { handle, send } from './ipc';
 import { buildMenu, setProjectMenuEnabled } from './menu';
@@ -21,7 +22,8 @@ const service = new ProjectService(indexer, {
   status: (status) => send(mainWindow, 'project:status', status),
   importProgress: (progress) => send(mainWindow, 'import:progress', progress),
 });
-const actions = createActions(service, () => mainWindow);
+const exporter = new ExportService(indexer, (progress) => send(mainWindow, 'export:progress', progress));
+const actions = createActions(service, exporter, () => mainWindow);
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -64,6 +66,7 @@ function registerIpc(): void {
   handle('assets:import', (paths) =>
     actions.importPhotos(Array.isArray(paths) && paths.every((p) => typeof p === 'string') ? paths : undefined),
   );
+  handle('export:run', (request) => actions.exportProject(request));
 }
 
 void app.whenReady().then(() => {

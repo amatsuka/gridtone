@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { ExportDialog } from './components/ExportDialog';
 import { GridView } from './components/GridView';
 import { GroupsDialog } from './components/GroupsDialog';
 import { ImportStatus } from './components/ImportStatus';
@@ -16,11 +17,12 @@ export function App() {
   const ready = useAppStore((state) => state.ready);
   const snapshot = useAppStore((state) => state.snapshot);
   const editorOpen = useAppStore((state) => state.editorSlotId !== null);
+  const exportOpen = useAppStore((state) => state.exportOpen);
 
   return (
     <div className="app">
       {/* Под открытым редактором фото сетка и инспектор не получают ни фокуса, ни кликов. */}
-      <div className="app-body" inert={editorOpen}>
+      <div className="app-body" inert={editorOpen || exportOpen}>
         <Toolbar snapshot={snapshot} />
         <ImportStatus />
         <main className="main">
@@ -37,6 +39,7 @@ export function App() {
       </div>
       <PhotoEditor />
       <GroupsDialog />
+      <ExportDialog />
     </div>
   );
 }

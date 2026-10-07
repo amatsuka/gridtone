@@ -6,6 +6,7 @@ import { api, endGesture, useAppStore } from './store';
 import {
   clearSelection,
   closeEditor,
+  closeExportDialog,
   isTextField,
   openEditor,
   runMenuCommand,
@@ -39,10 +40,16 @@ const ORIGINAL_CODE = 'Backslash';
 const STEP_BY_ARROW: Record<string, -1 | 1> = { ArrowLeft: -1, ArrowRight: 1 };
 
 function onKeyDown(event: KeyboardEvent): void {
-  const { snapshot, groupsDialog, editorSlotId } = useAppStore.getState();
+  const { snapshot, groupsDialog, exportOpen, editorSlotId } = useAppStore.getState();
   const editor = editorSlotId !== null;
-  // Диалог групп обрабатывает клавиши сам.
-  if (event.defaultPrevented || event.isComposing || !snapshot || groupsDialog) return;
+  if (event.defaultPrevented || event.isComposing || !snapshot) return;
+  // Диалоги групп и экспорта обрабатывают клавиши сами. Экспорт закрывается по Esc, даже если фокус
+  // ушёл из диалога: кнопка «Экспортировать…» на время записи выключается и теряет его.
+  if (exportOpen && event.code === 'Escape') {
+    closeExportDialog();
+    event.preventDefault();
+  }
+  if (groupsDialog || exportOpen) return;
   const mod = event.metaKey || event.ctrlKey;
   const text = isTextField(event.target);
   // Стрелки в ползунке и выпадающем списке двигают их, а не плитки.
@@ -57,6 +64,8 @@ function onKeyDown(event: KeyboardEvent): void {
     runMenuCommand('copyAdjust');
   } else if (mod && event.shiftKey && !event.altKey && event.code === 'KeyV') {
     runMenuCommand('pasteAdjust');
+  } else if (mod && event.shiftKey && !event.altKey && event.code === 'KeyE') {
+    runMenuCommand('export');
   } else if (mod && !event.shiftKey && !event.altKey && event.code === 'KeyA' && !text) {
     runMenuCommand('selectAll');
   } else if (!mod && event.code === 'Escape' && !text) {

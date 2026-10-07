@@ -1,27 +1,55 @@
 import { utilityProcess, type UtilityProcess } from 'electron';
-import type { IndexJob, IndexerRequest, IndexerResponse } from '@shared/ipc';
+import type { IndexJob, IndexerRequest, IndexerResponse, LutExportJob } from '@shared/ipc';
+import type { LutExportPort } from './export';
 import type { IndexerPort } from './project/service';
 import indexerPath from '../indexer/index?modulePath';
 
 interface PendingJob {
-  remaining: Set<number>;
   onMessage: (message: IndexerResponse) => void;
+  /** Процесс завершился, не ответив 'done': задача должна закончиться ошибкой, а не зависнуть. */
+  onExit: (code: number) => void;
 }
 
-/** Запускает индексатор по первому требованию и перезапускает, если он упал. */
-export class IndexerClient implements IndexerPort {
+/** Запускает utility process по первому требованию и перезапускает, если он упал. Импорт и экспорт LUT. */
+export class IndexerClient implements IndexerPort, LutExportPort {
   private child: UtilityProcess | null = null;
   private readonly jobs = new Map<string, PendingJob>();
 
   run(job: Omit<IndexJob, 'type'>, onMessage: (message: IndexerResponse) => void): void {
-    this.jobs.set(job.jobId, { remaining: new Set(job.items.keys()), onMessage });
-    const request: IndexerRequest = { type: 'index', ...job };
-    this.ensureChild().postMessage(request);
+    const remaining = new Set(job.items.keys());
+    this.start({ type: 'index', ...job }, {
+      onMessage: (message) => {
+        if (message.type === 'item') remaining.delete(message.index);
+        onMessage(message);
+      },
+      // Всё, что не успело обработаться, завершаем ошибкой, чтобы импорт не завис.
+      onExit: (code) => {
+        for (const index of remaining) {
+          onMessage({ type: 'item', jobId: job.jobId, index, ok: false, code: 'failed', error: `Индексатор завершился (код ${code})` });
+        }
+        onMessage({ type: 'done', jobId: job.jobId });
+      },
+    });
+  }
+
+  exportLuts(job: Omit<LutExportJob, 'type'>, onMessage: (message: IndexerResponse) => void): void {
+    this.start({ type: 'export-lut', ...job }, {
+      onMessage,
+      onExit: (code) => {
+        onMessage({ type: 'file', jobId: job.jobId, file: '', ok: false, error: `Процесс экспорта завершился (код ${code})` });
+        onMessage({ type: 'done', jobId: job.jobId });
+      },
+    });
   }
 
   dispose(): void {
     this.child?.kill();
     this.child = null;
+  }
+
+  private start(request: IndexerRequest, job: PendingJob): void {
+    this.jobs.set(request.jobId, job);
+    this.ensureChild().postMessage(request);
   }
 
   private ensureChild(): UtilityProcess {
@@ -30,20 +58,14 @@ export class IndexerClient implements IndexerPort {
     child.on('message', (message: IndexerResponse) => {
       const job = this.jobs.get(message.jobId);
       if (!job) return;
-      if (message.type === 'item') job.remaining.delete(message.index);
-      else this.jobs.delete(message.jobId);
+      if (message.type === 'done') this.jobs.delete(message.jobId);
       job.onMessage(message);
     });
     child.on('exit', (code) => {
       if (this.child === child) this.child = null;
-      // Всё, что не успело обработаться, завершаем ошибкой, чтобы импорт не завис.
-      for (const [jobId, job] of this.jobs) {
-        for (const index of job.remaining) {
-          job.onMessage({ type: 'item', jobId, index, ok: false, code: 'failed', error: `Индексатор завершился (код ${code})` });
-        }
-        job.onMessage({ type: 'done', jobId });
-      }
+      const jobs = [...this.jobs.values()];
       this.jobs.clear();
+      for (const job of jobs) job.onExit(code);
     });
     this.child = child;
     return child;

@@ -5,6 +5,7 @@ import type { Actions } from './actions';
 
 const PROJECT_ITEM_IDS = [
   'import',
+  'export',
   'save',
   'close',
   'undo',
@@ -35,6 +36,8 @@ export function buildMenu(actions: Actions, sendCommand: (command: MenuCommand) 
         { label: 'Открыть проект…', accelerator: 'CmdOrCtrl+O', click: () => void actions.openProject() },
         { type: 'separator' },
         { id: 'import', label: 'Импортировать фото…', accelerator: 'CmdOrCtrl+I', click: () => void actions.importPhotos() },
+        // Диалог экспорта живёт в renderer: меню только открывает его.
+        command('export', 'Экспорт…', 'CmdOrCtrl+Shift+E'),
         { type: 'separator' },
         { id: 'save', label: 'Сохранить', accelerator: 'CmdOrCtrl+S', click: () => void actions.saveProject() },
         { id: 'close', label: 'Закрыть проект', accelerator: 'CmdOrCtrl+Shift+W', click: () => void actions.closeProject() },

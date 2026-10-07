@@ -7,13 +7,17 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron';
-import type { ProjectSnapshot } from '@shared/ipc';
+import type { ExportStarted, ProjectSnapshot } from '@shared/ipc';
+import { parseExportRequest, type ExportService } from './export';
 import { IMPORT_EXTENSIONS, type ProjectService } from './project/service';
 
 export type Actions = ReturnType<typeof createActions>;
 
 /** Пользовательские действия с диалогами. Их вызывают и IPC, и меню. */
-export function createActions(service: ProjectService, getWindow: () => BrowserWindow | null) {
+export function createActions(service: ProjectService, exporter: ExportService, getWindow: () => BrowserWindow | null) {
+  /** Папка последнего экспорта: диалог открывается в ней. Только до выхода из приложения. */
+  let exportRoot: string | undefined;
+
   const showOpen = (options: OpenDialogOptions) => {
     const window = getWindow();
     return window ? dialog.showOpenDialog(window, options) : dialog.showOpenDialog(options);
@@ -99,6 +103,37 @@ export function createActions(service: ProjectService, getWindow: () => BrowserW
       }
       const jobId = service.importFiles(files);
       return jobId === null ? null : { jobId };
+    },
+
+    /**
+     * Экспорт из диалога renderer: запрос проверяется до выбора папки, затем main создаёт подпапку
+     * и запускает запекание. Бросает, если запрос неверный — renderer его так не составит.
+     */
+    async exportProject(request: unknown): Promise<ExportStarted | null> {
+      const parsed = parseExportRequest(request);
+      const before = service.snapshot();
+      if (!before || before.dir !== parsed.dir) return null;
+      exporter.plan(before.project, parsed);
+      const result = await showOpen({
+        title: 'Папка для экспорта',
+        message: 'Файлы лягут в новую подпапку: старые экспорты не перезаписываются',
+        buttonLabel: 'Экспортировать',
+        properties: ['openDirectory', 'createDirectory'],
+        ...(exportRoot ? { defaultPath: exportRoot } : { defaultPath: app.getPath('pictures') }),
+      });
+      const root = result.filePaths[0];
+      if (result.canceled || root === undefined) return null;
+      // Пока был открыт диалог, проект могли закрыть.
+      const snapshot = service.snapshot();
+      if (!snapshot || snapshot.dir !== parsed.dir) return null;
+      try {
+        const started = await exporter.start(root, snapshot.project, parsed);
+        exportRoot = root;
+        return started;
+      } catch (err) {
+        await reportError('Не удалось начать экспорт', err);
+        return null;
+      }
     },
 
     async saveProject(): Promise<void> {

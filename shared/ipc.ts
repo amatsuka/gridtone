@@ -1,4 +1,6 @@
 // Единый контракт IPC. Любой новый канал объявляется здесь и только здесь.
+import type { PipelineParams } from '@core/color/bake';
+import type { LutExportSize } from '@core/lut/verify';
 import type { ProjectPatch } from '@core/project/patch';
 import type { AssetRef, Project } from '@core/project/types';
 import type { ViewMode } from './view';
@@ -51,7 +53,7 @@ export interface PatchBatch {
  * меню срабатывает, только если страница сочетание не обработала, или по клику мышью.
  * `view:<режим>` — пункты меню «Вид» (docs/decisions/0012-view-modes.md): клавиши 1–7 у них только подписи.
  */
-export type MenuCommand = 'undo' | 'redo' | 'selectAll' | 'copyAdjust' | 'pasteAdjust' | `view:${ViewMode}`;
+export type MenuCommand = 'undo' | 'redo' | 'selectAll' | 'copyAdjust' | 'pasteAdjust' | 'export' | `view:${ViewMode}`;
 
 export interface ImportProgress {
   jobId: string;
@@ -60,6 +62,40 @@ export interface ImportProgress {
   added: number;
   duplicates: number;
   errors: { path: string; message: string }[];
+  finished: boolean;
+}
+
+/** Раздел LUT в запросе экспорта (docs/decisions/0014-lut-export.md). */
+export interface LutExportRequest {
+  /** Образы и размер решётки `.cube` у каждого: 33 или 65, по проверке по кругу в диалоге. */
+  looks: { id: string; size: LutExportSize }[];
+  cube: boolean;
+  /** HaldCLUT уровня 8, PNG 16 бит: размер решётки у него всегда 64³. */
+  hald: boolean;
+}
+
+/** Экран «Экспорт». Разделы добавляются по подэтапам этапа 3; папку спрашивает main. */
+export interface ExportRequest {
+  /** Проект, из которого экспортируем: если открыт уже другой, экспорт не начнётся. */
+  dir: string;
+  lut?: LutExportRequest;
+}
+
+export interface ExportStarted {
+  jobId: string;
+  /** Новая подпапка экспорта: каждый экспорт пишет в свою, ничего не перезаписывая. */
+  dir: string;
+}
+
+export interface ExportProgress {
+  jobId: string;
+  dir: string;
+  /** Файлов в задаче. */
+  total: number;
+  done: number;
+  /** Записанные файлы, имена внутри dir, в порядке записи. */
+  files: string[];
+  errors: { file: string; message: string }[];
   finished: boolean;
 }
 
@@ -76,12 +112,15 @@ export interface InvokeMap {
   'project:patch': { args: [batch: PatchBatch]; result: void };
   /** Импортировать фото; без аргумента — через диалог. null — нет проекта или отменено. */
   'assets:import': { args: [paths?: string[]]; result: { jobId: string } | null };
+  /** Спросить папку и начать экспорт в новую подпапку; ход — событием export:progress. null — отменено. */
+  'export:run': { args: [request: ExportRequest]; result: ExportStarted | null };
 }
 
 export interface EventMap {
   'project:changed': ProjectSnapshot | null;
   'project:status': ProjectStatus;
   'import:progress': ImportProgress;
+  'export:progress': ExportProgress;
   'menu:command': MenuCommand;
 }
 
@@ -99,12 +138,14 @@ const invokeChannels = {
   'project:close': true,
   'project:patch': true,
   'assets:import': true,
+  'export:run': true,
 } satisfies Record<InvokeChannel, true>;
 
 const eventChannels = {
   'project:changed': true,
   'project:status': true,
   'import:progress': true,
+  'export:progress': true,
   'menu:command': true,
 } satisfies Record<EventChannel, true>;
 
@@ -132,7 +173,26 @@ export interface IndexJob {
   items: IndexItem[];
 }
 
-export type IndexerRequest = IndexJob;
+/** LUT одного образа: `.cube` размера size и/или HaldCLUT. Файлы — <fileBase>.cube и <fileBase>.png. */
+export interface LutExportItem {
+  fileBase: string;
+  /** Имя образа: TITLE в `.cube` и подпись в комментарии. */
+  title: string;
+  params: PipelineParams;
+  size: LutExportSize;
+  cube: boolean;
+  hald: boolean;
+}
+
+/** Запекание и запись LUT в utility process. Папка уже создана main; файлы в ней не перезаписываются. */
+export interface LutExportJob {
+  type: 'export-lut';
+  jobId: string;
+  dir: string;
+  items: LutExportItem[];
+}
+
+export type IndexerRequest = IndexJob | LutExportJob;
 
 export type IndexedAsset = Omit<AssetRef, 'importedAt'>;
 
@@ -141,4 +201,7 @@ export type IndexErrorCode = 'unsupported' | 'hash-mismatch' | 'failed';
 export type IndexerResponse =
   | { type: 'item'; jobId: string; index: number; ok: true; asset: IndexedAsset }
   | { type: 'item'; jobId: string; index: number; ok: false; code: IndexErrorCode; error: string }
+  /** Экспорт: файл записан (ok) или не записан; file — имя внутри папки задачи. */
+  | { type: 'file'; jobId: string; file: string; ok: true }
+  | { type: 'file'; jobId: string; file: string; ok: false; error: string }
   | { type: 'done'; jobId: string };

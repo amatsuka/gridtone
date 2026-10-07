@@ -1,6 +1,6 @@
 import type { ProjectSnapshot, SaveState } from '@shared/ipc';
 import { VIEW_MODE_LABELS, VIEW_MODES } from '@shared/view';
-import { setViewMode } from '../commands';
+import { openExportDialog, setViewMode } from '../commands';
 import { api, useAppStore } from '../store';
 
 const SAVE_LABEL: Record<SaveState, string> = {
@@ -55,6 +55,9 @@ export function Toolbar({ snapshot }: { snapshot: ProjectSnapshot | null }) {
           <button onClick={() => void api.invoke('project:close')}>Закрыть</button>
           <button className="primary" onClick={() => void api.invoke('assets:import')}>
             Импорт фото
+          </button>
+          <button onClick={openExportDialog} title="Экспорт — ⌘⇧E">
+            Экспорт
           </button>
         </>
       )}
