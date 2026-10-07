@@ -1,15 +1,15 @@
-// Действия пользователя над сеткой: выделение, перестановка, копирование правок, образы, команды меню.
+// Действия пользователя над сеткой: выделение, перестановка, копирование правок, образы, редактор фото, команды меню.
 // Проект меняется только через editProject — так каждое действие попадает в историю (ADR 0011).
 import { original } from 'immer';
 import { copyAdjustGroups, type AdjustGroup } from '@core/project/adjustGroups';
 import { assignLook, createLook, duplicateLook, nextLookName, removeLook } from '@core/project/looks';
 import { moveSlots, shiftSlots } from '@core/project/order';
-import type { Adjust, Project, Slot } from '@core/project/types';
+import type { Adjust, Crop, Project, Slot } from '@core/project/types';
 import { isValidLookName } from '@core/project/validate';
 import type { MenuCommand } from '@shared/ipc';
 import { isViewMode, type ViewMode } from '@shared/view';
 import { clickSelection, EMPTY_SELECTION, selectAll } from './selection';
-import { editProject, redo, undo, useAppStore, type InspectorTab } from './store';
+import { editProject, redo, undo, useAppStore, type EditorTab, type InspectorTab } from './store';
 
 function project(): Project | undefined {
   return useAppStore.getState().snapshot?.project;
@@ -73,11 +73,11 @@ export function shiftSelection(delta: number): void {
   if (ids.length === 0) return;
   reorder((slots) => shiftSlots(slots, ids, delta));
   // Сдвинутая плитка могла уйти за край прокрутки; DOM обновится к следующему кадру.
-  if (primary) {
-    requestAnimationFrame(() =>
-      document.querySelector(`[data-slot-id="${CSS.escape(primary)}"]`)?.scrollIntoView({ block: 'nearest' }),
-    );
-  }
+  if (primary) scrollToTile(primary);
+}
+
+function scrollToTile(slotId: string): void {
+  requestAnimationFrame(() => document.querySelector(`[data-slot-id="${CSS.escape(slotId)}"]`)?.scrollIntoView({ block: 'nearest' }));
 }
 
 // ─── Правки ─────────────────────────────────────────────────────────────────
@@ -87,6 +87,14 @@ export function editSlotAdjust(slotId: string, change: (adjust: Adjust) => void,
   editProject((draft) => {
     const slot = draft.slots.find((s) => s.id === slotId);
     if (slot) change(slot.adjust);
+  }, gesture);
+}
+
+/** Правка кадра слота: редактор фото. Один жест мыши — одна запись истории. */
+export function editSlotCrop(slotId: string, change: (crop: Crop) => void, gesture?: string): void {
+  editProject((draft) => {
+    const slot = draft.slots.find((s) => s.id === slotId);
+    if (slot) change(slot.crop);
   }, gesture);
 }
 
@@ -176,6 +184,46 @@ export function setActiveLook(lookId: string | null): void {
 export function assignLookToSelection(lookId: string | null): void {
   const { ids } = useAppStore.getState().selection;
   if (ids.length > 0) editProject((draft) => assignLook(draft, ids, lookId));
+}
+
+// ─── Редактор фото ──────────────────────────────────────────────────────────
+
+/** Посты с фото в порядке сетки: по ним ходят ←/→ в редакторе. */
+function photoSlots(): Slot[] {
+  return project()?.slots.filter((slot) => slot.assetId !== undefined) ?? [];
+}
+
+/**
+ * E и двойной щелчок по плитке: редактор основной плитки. Позиция без фото не открывается.
+ * Если открывают не основную плитку, она становится выделенной — правки копируются с того, что видно.
+ */
+export function openEditor(slotId: string | null = useAppStore.getState().selection.primary): void {
+  const slot = photoSlots().find((s) => s.id === slotId);
+  if (!slot) return;
+  if (useAppStore.getState().selection.primary !== slot.id) clickTile(slot.id, 'replace');
+  useAppStore.setState({ editorSlotId: slot.id });
+}
+
+/** Esc и «Готово»: сетка прокручивается к посту, на котором закрыли редактор. */
+export function closeEditor(): void {
+  const { editorSlotId } = useAppStore.getState();
+  if (!editorSlotId) return;
+  useAppStore.setState({ editorSlotId: null });
+  scrollToTile(editorSlotId);
+}
+
+/** ←/→ в редакторе: соседний пост с фото. Выделение следует за редактором. */
+export function stepEditor(delta: -1 | 1): void {
+  const { editorSlotId } = useAppStore.getState();
+  const photos = photoSlots();
+  const next = photos[photos.findIndex((slot) => slot.id === editorSlotId) + delta];
+  if (!editorSlotId || !next) return;
+  clickTile(next.id, 'replace');
+  useAppStore.setState({ editorSlotId: next.id });
+}
+
+export function setEditorTab(tab: EditorTab): void {
+  useAppStore.setState({ editorTab: tab });
 }
 
 // ─── Просмотр ───────────────────────────────────────────────────────────────

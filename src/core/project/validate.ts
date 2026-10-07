@@ -17,6 +17,9 @@ const GRID_KEYS = ['cx', 'cy'];
 const LOOK_KEYS = ['id', 'name', 'adjust'];
 
 export const LOOK_NAME_MAX = 100;
+/** Кадр: увеличение 1…CROP_ZOOM_MAX, поворот −CROP_ANGLE_MAX…CROP_ANGLE_MAX градусов. */
+export const CROP_ZOOM_MAX = 10;
+export const CROP_ANGLE_MAX = 45;
 /** Точек в одной кривой — не больше. */
 export const CURVE_MAX_POINTS = 16;
 
@@ -52,8 +55,8 @@ export function isValidCrop(value: unknown): value is Crop {
     FEED_ASPECTS.includes(feed['aspect']) &&
     inRange(feed['cx'], 0, 1) &&
     inRange(feed['cy'], 0, 1) &&
-    inRange(feed['zoom'], 1, 10) &&
-    inRange(feed['angle'], -45, 45) &&
+    inRange(feed['zoom'], 1, CROP_ZOOM_MAX) &&
+    inRange(feed['angle'], -CROP_ANGLE_MAX, CROP_ANGLE_MAX) &&
     hasKeys(grid, GRID_KEYS) &&
     inRange(grid['cx'], 0, 1) &&
     inRange(grid['cy'], 0, 1)

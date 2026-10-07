@@ -4,6 +4,7 @@ import { labToSrgb8, type TileMetrics } from '@core/metrics/tile';
 import type { Slot } from '@core/project/types';
 import type { ProjectSnapshot } from '@shared/ipc';
 import type { ViewMode } from '@shared/view';
+import { openEditor } from '../commands';
 import { useMetricsStore } from '../metrics';
 import { useAppStore } from '../store';
 import { GridCanvas } from './GridCanvas';
@@ -46,7 +47,17 @@ export function GridView({ snapshot }: { snapshot: ProjectSnapshot }) {
         ) : (
           <div className="grid-column">
             {viewMode === 'profile' && <ProfileHeader project={project} />}
-            <div className={`grid${dragOrder ? ' dragging' : ''}`} data-testid="grid" ref={gridRef} {...drag}>
+            <div
+              className={`grid${dragOrder ? ' dragging' : ''}`}
+              data-testid="grid"
+              ref={gridRef}
+              {...drag}
+              // Двойной щелчок по плитке открывает редактор фото, как E.
+              onDoubleClick={(e) => {
+                const slotId = (e.target as Element).closest<HTMLElement>('[data-slot-id]')?.dataset['slotId'];
+                if (slotId) openEditor(slotId);
+              }}
+            >
               {slots.map((slot, index) => (
                 <Tile
                   key={slot.id}

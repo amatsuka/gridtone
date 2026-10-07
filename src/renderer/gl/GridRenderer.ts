@@ -1,14 +1,10 @@
 // Сетка на WebGL2: один контекст рисует все видимые плитки в общий холст по координатам DOM-сетки.
 // DOM остаётся для номеров, бейджей и кликов; холст лежит под ним (docs/spec.md, «Рендер»).
-import { bakeAdjust, CURVE_TABLE_SIZE, type BakedAdjust } from '@core/color/bake';
-import { HSL_TABLE_SIZE } from '@core/color/hsl';
 import type { ViewOutput } from '@core/color/view';
 import { gridWindowTransform } from '@core/project/crop';
 import type { Adjust, Project, Slot } from '@core/project/types';
 import type { AssetStatus } from '@shared/ipc';
-import { PipelineProgram, TEXTURE_UNIT } from './program';
-import { TableAtlas } from './tables';
-import { ProxyTextures } from './textures';
+import { PipelineGpu } from './gpu';
 
 export interface GridScene {
   project: Project;
@@ -19,20 +15,11 @@ export interface GridScene {
   original: boolean;
 }
 
-interface GpuState {
-  program: PipelineProgram;
-  curves: TableAtlas;
-  hsl: TableAtlas;
-  textures: ProxyTextures;
-}
-
 export class GridRenderer {
   private readonly gl: WebGL2RenderingContext;
-  private gpu: GpuState | null;
+  private gpu: PipelineGpu | null;
   private scene: GridScene | null = null;
   private frameRequest = 0;
-  /** Подготовленные параметры по объекту коррекции: Immer меняет объект только при правке. */
-  private readonly baked = new WeakMap<Adjust, BakedAdjust>();
 
   /** tileRoot — контейнер, где лежат плитки с data-slot-id. Бросает, если WebGL2 недоступен. */
   constructor(
@@ -90,8 +77,7 @@ export class GridRenderer {
     const slots = new Map(scene.project.slots.map((slot) => [slot.id, slot]));
     const looks = new Map(scene.project.looks.map((look) => [look.id, look.adjust]));
     const bounds = canvas.getBoundingClientRect();
-    gpu.program.use();
-    gpu.program.setView(scene.view);
+    gpu.begin(scene.view);
 
     for (const tile of root.querySelectorAll<HTMLElement>('[data-slot-id]')) {
       const slot = slots.get(tile.dataset['slotId'] ?? '');
@@ -112,13 +98,11 @@ export class GridRenderer {
       }
     }
 
-    gpu.curves.endFrame();
-    gpu.hsl.endFrame();
-    gpu.textures.endFrame();
+    gpu.endFrame();
   }
 
   private drawTile(
-    gpu: GpuState,
+    gpu: PipelineGpu,
     scene: GridScene,
     slot: Slot,
     looks: Map<string, Adjust>,
@@ -131,60 +115,25 @@ export class GridRenderer {
 
     const look = slot.lookId ? looks.get(slot.lookId) : undefined;
     const adjusts = scene.original ? [] : look ? [slot.adjust, look] : [slot.adjust];
-    const passes = adjusts.map((adjust) => {
-      const baked = this.bake(adjust);
-      return {
-        baked,
-        tables: {
-          curvesRow: baked.curves ? gpu.curves.row(baked.curves) : 0,
-          hslRow: baked.color?.hsl ? gpu.hsl.row(baked.color.hsl) : 0,
-        },
-      };
-    });
-
-    const { gl } = this;
-    gl.activeTexture(gl.TEXTURE0 + TEXTURE_UNIT.image);
-    gl.bindTexture(gl.TEXTURE_2D, proxy.texture);
-    gpu.curves.bind(TEXTURE_UNIT.curves);
-    gpu.hsl.bind(TEXTURE_UNIT.hsl);
-    gpu.program.setPasses(passes);
-    gpu.program.setGeometry(rect, [this.canvas.width, this.canvas.height], gridWindowTransform(proxy.width, proxy.height, slot.crop, scene.project.grid.ratio));
-    gpu.program.draw();
+    const uv = gridWindowTransform(proxy.width, proxy.height, slot.crop, scene.project.grid.ratio);
+    gpu.draw(proxy, adjusts, rect, [this.canvas.width, this.canvas.height], uv);
     return true;
   }
 
-  private bake(adjust: Adjust): BakedAdjust {
-    let baked = this.baked.get(adjust);
-    if (!baked) {
-      baked = bakeAdjust(adjust);
-      this.baked.set(adjust, baked);
-    }
-    return baked;
-  }
-
-  private createGpu(): GpuState {
-    return {
-      program: new PipelineProgram(this.gl),
-      curves: new TableAtlas(this.gl, CURVE_TABLE_SIZE),
-      hsl: new TableAtlas(this.gl, HSL_TABLE_SIZE),
-      textures: new ProxyTextures(this.gl, () => this.requestRender()),
-    };
+  private createGpu(): PipelineGpu {
+    return new PipelineGpu(this.gl, { size: 512, maxTextures: 64, onLoad: () => this.requestRender() });
   }
 
   private disposeGpu(): void {
     const gpu = this.gpu;
     this.gpu = null;
-    if (!gpu || this.gl.isContextLost()) return;
-    gpu.program.dispose();
-    gpu.curves.dispose();
-    gpu.hsl.dispose();
-    gpu.textures.dispose();
+    gpu?.dispose();
   }
 
   // Контекст может пропасть (сон, смена GPU). После восстановления всё создаётся заново.
   private readonly onContextLost = (event: Event): void => {
     event.preventDefault();
-    this.gpu?.textures.dispose();
+    this.gpu?.abandon();
     this.gpu = null;
   };
 

@@ -13,6 +13,7 @@ export const api = window.gridtone;
 enablePatches();
 
 export type InspectorTab = 'photo' | 'look';
+export type EditorTab = 'color' | 'crop';
 
 /** Скопированные правки: коррекция основной плитки на момент копирования и выбранные группы. */
 export interface AdjustClipboard {
@@ -41,6 +42,9 @@ interface AppState {
   viewMode: ViewMode;
   /** Удерживается `\`: сетка без поправок и образов. */
   showOriginal: boolean;
+  /** Слот, открытый в редакторе фото; null — редактор закрыт. Состояние интерфейса, как и вкладка. */
+  editorSlotId: string | null;
+  editorTab: EditorTab;
 }
 
 export const useAppStore = create<AppState>()(() => ({
@@ -56,6 +60,8 @@ export const useAppStore = create<AppState>()(() => ({
   groupsDialog: null,
   viewMode: 'grid',
   showOriginal: false,
+  editorSlotId: null,
+  editorTab: 'color',
 }));
 
 // Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.
@@ -130,6 +136,7 @@ function receiveSnapshot(incoming: ProjectSnapshot | null): void {
   }
   const order = snapshot?.project.slots.map((slot) => slot.id) ?? [];
   const lookKept = sameProject && snapshot?.project.looks.some((look) => look.id === current.activeLookId);
+  const editorKept = sameProject && snapshot?.project.slots.some((slot) => slot.id === current.editorSlotId && slot.assetId);
   useAppStore.setState({
     ready: true,
     snapshot,
@@ -138,6 +145,7 @@ function receiveSnapshot(incoming: ProjectSnapshot | null): void {
     // Превью перетаскивания пересчитается при следующем движении уже с новыми слотами.
     dragOrder: null,
     groupsDialog: sameProject ? current.groupsDialog : null,
+    editorSlotId: editorKept ? current.editorSlotId : null,
     // Прогресс импорта относится к проекту: при смене проекта он больше не нужен.
     importProgress: sameProject ? current.importProgress : null,
   });

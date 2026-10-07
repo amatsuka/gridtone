@@ -3,7 +3,17 @@
 // (docs/decisions/0011-undo-history.md).
 import { VIEW_MODES, type ViewMode } from '@shared/view';
 import { api, endGesture, useAppStore } from './store';
-import { clearSelection, isTextField, runMenuCommand, setShowOriginal, setViewMode, shiftSelection } from './commands';
+import {
+  clearSelection,
+  closeEditor,
+  isTextField,
+  openEditor,
+  runMenuCommand,
+  setShowOriginal,
+  setViewMode,
+  shiftSelection,
+  stepEditor,
+} from './commands';
 
 const COLUMNS = 3;
 
@@ -25,8 +35,12 @@ const VIEW_BY_CODE: Record<string, ViewMode> = Object.fromEntries(
 /** До/после — удержание `\`. По event.code, как и остальные: символ на этой клавише зависит от раскладки. */
 const ORIGINAL_CODE = 'Backslash';
 
+/** ←/→ в редакторе фото — соседний пост. */
+const STEP_BY_ARROW: Record<string, -1 | 1> = { ArrowLeft: -1, ArrowRight: 1 };
+
 function onKeyDown(event: KeyboardEvent): void {
-  const { snapshot, groupsDialog } = useAppStore.getState();
+  const { snapshot, groupsDialog, editorSlotId } = useAppStore.getState();
+  const editor = editorSlotId !== null;
   // Диалог групп обрабатывает клавиши сам.
   if (event.defaultPrevented || event.isComposing || !snapshot || groupsDialog) return;
   const mod = event.metaKey || event.ctrlKey;
@@ -46,9 +60,16 @@ function onKeyDown(event: KeyboardEvent): void {
   } else if (mod && !event.shiftKey && !event.altKey && event.code === 'KeyA' && !text) {
     runMenuCommand('selectAll');
   } else if (!mod && event.code === 'Escape' && !text) {
-    clearSelection();
-  } else if (event.shiftKey && !mod && !event.altKey && delta !== undefined && !control) {
+    // Esc сначала закрывает редактор фото, затем снимает выделение.
+    if (editor) closeEditor();
+    else clearSelection();
+  } else if (editor && plain && STEP_BY_ARROW[event.code] !== undefined && !control) {
+    stepEditor(STEP_BY_ARROW[event.code] as -1 | 1);
+  } else if (!editor && event.shiftKey && !mod && !event.altKey && delta !== undefined && !control) {
+    // В редакторе посты не переставляются: соседи под ←/→ остаются теми же.
     shiftSelection(delta);
+  } else if (!editor && plain && event.code === 'KeyE' && !text) {
+    openEditor();
   } else if (plain && view !== undefined && !text && !(event.target instanceof HTMLSelectElement)) {
     setViewMode(view);
   } else if (plain && event.code === ORIGINAL_CODE && !text) {

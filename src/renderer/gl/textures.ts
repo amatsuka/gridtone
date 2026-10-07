@@ -1,5 +1,6 @@
-// Прокси 512 из gridtone:// в текстуры WebGL, с LRU: в памяти держатся только недавно видимые плитки.
-import { proxyUrl } from '@shared/cache';
+// Прокси из gridtone:// в текстуры WebGL, с LRU: в памяти держатся только недавно нужные.
+// Сетка берёт прокси 512 (до 64 текстур), редактор фото — 2048 (текущее фото и соседи, до трёх).
+import { proxyUrl, type ProxySize } from '@shared/cache';
 
 interface Entry {
   state: 'loading' | 'ready' | 'failed';
@@ -25,12 +26,23 @@ export class ProxyTextures {
   private frame = 0;
   private disposed = false;
 
-  /** onLoad — новая текстура готова, нужен кадр. maxTextures ≈ 1.9 МБ каждая вместе с mip-уровнями. */
+  /**
+   * onLoad — новая текстура готова, нужен кадр. С mip-уровнями текстура прокси 512 занимает около 1.9 МБ,
+   * прокси 2048 — до 22 МБ.
+   */
   constructor(
     private readonly gl: WebGL2RenderingContext,
     private readonly onLoad: () => void,
     private readonly maxTextures = 64,
+    private readonly size: ProxySize = 512,
   ) {}
+
+  /** Готовых текстур в памяти. */
+  get count(): number {
+    let n = 0;
+    for (const entry of this.entries.values()) if (entry.texture) n++;
+    return n;
+  }
 
   /** Текстура прокси, если готова. Если нет — ставит загрузку в очередь. */
   get(assetId: string): ProxyTexture | null {
@@ -84,7 +96,7 @@ export class ProxyTextures {
     const entry = this.entries.get(assetId);
     if (!entry) return;
     try {
-      const response = await fetch(proxyUrl(assetId, 512));
+      const response = await fetch(proxyUrl(assetId, this.size));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       // Прокси уже в sRGB (ADR 0004): браузер не должен ничего пересчитывать.
       const bitmap = await createImageBitmap(await response.blob(), {

@@ -4,8 +4,8 @@ import type { ViewMode } from '@shared/view';
 import { GridRenderer } from '../gl/GridRenderer';
 import { useAppStore } from '../store';
 
-/** Что шейдер делает после проходов в каждом режиме: только 3 и 4 меняют цвет на холсте. */
-function viewOutput(mode: ViewMode): ViewOutput {
+/** Что шейдер делает после проходов в каждом режиме: только 3 и 4 меняют цвет на холсте. Так же и в редакторе фото. */
+export function viewOutput(mode: ViewMode): ViewOutput {
   return mode === 'luminance' ? 'luminance' : mode === 'posterize' ? 'posterize' : 'color';
 }
 

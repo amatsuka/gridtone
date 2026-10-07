@@ -13,6 +13,8 @@ export interface SliderProps {
   digits?: number;
   /** Фон дорожки, например градиент цветов HSL. */
   track?: string;
+  /** Подпись значения; по умолчанию — со знаком, как в Lightroom. */
+  format?: (value: number) => string;
   onChange: (value: number) => void;
   onReset: () => void;
 }
@@ -24,13 +26,13 @@ export function formatSigned(value: number, digits = 0): string {
 }
 
 /** Ползунок коррекции. Двойной щелчок сбрасывает его в ноль, как в Lightroom. */
-export function Slider({ label, value, min, max, step, disabled, testId, digits = 0, track, onChange, onReset }: SliderProps) {
+export function Slider({ label, value, min, max, step, disabled, testId, digits = 0, track, format, onChange, onReset }: SliderProps) {
   const style = track ? ({ '--track': track } as CSSProperties) : undefined;
   return (
     <label className="slider" onDoubleClick={() => !disabled && onReset()}>
       <span className="slider-label">{label}</span>
       <output className="slider-value" data-testid={testId}>
-        {formatSigned(value, digits)}
+        {format ? format(value) : formatSigned(value, digits)}
       </output>
       <input
         type="range"

@@ -62,6 +62,13 @@ button.link {
   height: 100%;
 }
 
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -602,7 +609,8 @@ button:disabled {
   font-size: 12px;
 }
 
-.segmented button[aria-selected='true'] {
+.segmented button[aria-selected='true'],
+.segmented button[aria-pressed='true'] {
   background: var(--control-hover);
   color: var(--text);
 }
@@ -753,4 +761,162 @@ button:disabled {
   stroke: var(--text);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
+}
+
+/* ─── Редактор фото ───────────────────────────────────────────────────────── */
+
+.photo-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.editor-position {
+  min-width: 104px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-tabs {
+  width: 180px;
+  margin: 0 0 0 16px;
+}
+
+.editor-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.editor-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.editor-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.editor-fallback {
+  position: absolute;
+}
+
+.editor-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.editor-panel {
+  width: 300px;
+}
+
+.editor-hint {
+  margin-top: 16px;
+}
+
+/* Контуры кадра ленты и окна сетки: тонкие белые линии с тёмной тенью — видны и на светлом фото. */
+.crop-overlay {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.crop-overlay.editable {
+  pointer-events: auto;
+}
+
+.crop-overlay polygon,
+.crop-handle {
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 80%));
+}
+
+.crop-shade {
+  fill: rgb(0 0 0 / 55%);
+  pointer-events: none;
+}
+
+.crop-feed,
+.crop-grid {
+  fill: transparent;
+  stroke: #fff;
+  vector-effect: non-scaling-stroke;
+}
+
+.crop-feed {
+  stroke-width: 1;
+}
+
+.crop-grid {
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.crop-overlay-color .crop-feed,
+.crop-overlay-color .crop-grid {
+  stroke-opacity: 0.8;
+}
+
+.crop-overlay.editable .crop-feed,
+.crop-overlay.editable .crop-grid {
+  cursor: move;
+}
+
+.crop-guides {
+  stroke: rgb(255 255 255 / 35%);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.crop-handle {
+  fill: var(--text);
+  stroke: rgb(0 0 0 / 60%);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  cursor: nwse-resize;
+}
+
+.angle-field {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.slider .angle-field input {
+  grid-column: auto;
+  width: 72px;
+  font: inherit;
+  color: var(--text);
+  background: var(--control);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+  text-align: right;
 }

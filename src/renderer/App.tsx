@@ -3,6 +3,7 @@ import { GridView } from './components/GridView';
 import { GroupsDialog } from './components/GroupsDialog';
 import { ImportStatus } from './components/ImportStatus';
 import { Inspector } from './components/Inspector';
+import { PhotoEditor } from './components/PhotoEditor';
 import { Toolbar } from './components/Toolbar';
 import { connectMetrics } from './metrics';
 import { connectShortcuts } from './shortcuts';
@@ -14,22 +15,27 @@ export function App() {
   useEffect(() => connectMetrics(), []);
   const ready = useAppStore((state) => state.ready);
   const snapshot = useAppStore((state) => state.snapshot);
+  const editorOpen = useAppStore((state) => state.editorSlotId !== null);
 
   return (
     <div className="app">
-      <Toolbar snapshot={snapshot} />
-      <ImportStatus />
-      <main className="main">
-        {ready &&
-          (snapshot ? (
-            <>
-              <GridView snapshot={snapshot} />
-              <Inspector />
-            </>
-          ) : (
-            <Welcome />
-          ))}
-      </main>
+      {/* Под открытым редактором фото сетка и инспектор не получают ни фокуса, ни кликов. */}
+      <div className="app-body" inert={editorOpen}>
+        <Toolbar snapshot={snapshot} />
+        <ImportStatus />
+        <main className="main">
+          {ready &&
+            (snapshot ? (
+              <>
+                <GridView snapshot={snapshot} />
+                <Inspector />
+              </>
+            ) : (
+              <Welcome />
+            ))}
+        </main>
+      </div>
+      <PhotoEditor />
       <GroupsDialog />
     </div>
   );
