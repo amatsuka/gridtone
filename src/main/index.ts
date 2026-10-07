@@ -5,6 +5,7 @@ import { IndexerClient } from './indexer-client';
 import { handle, send } from './ipc';
 import { buildMenu, setProjectMenuEnabled } from './menu';
 import { ProjectService } from './project/service';
+import { parsePatchBatch } from './patch-batch';
 import { handleGridtoneProtocol, registerGridtoneScheme } from './protocol';
 
 registerGridtoneScheme();
@@ -17,6 +18,7 @@ const service = new ProjectService(indexer, {
     send(mainWindow, 'project:changed', snapshot);
     setProjectMenuEnabled(snapshot !== null);
   },
+  status: (status) => send(mainWindow, 'project:status', status),
   importProgress: (progress) => send(mainWindow, 'import:progress', progress),
 });
 const actions = createActions(service, () => mainWindow);
@@ -58,6 +60,7 @@ function registerIpc(): void {
   handle('project:get', () => service.snapshot());
   handle('project:save', () => actions.saveProject());
   handle('project:close', () => actions.closeProject());
+  handle('project:patch', (batch) => service.applyPatches(parsePatchBatch(batch)));
   handle('assets:import', (paths) =>
     actions.importPhotos(Array.isArray(paths) && paths.every((p) => typeof p === 'string') ? paths : undefined),
   );

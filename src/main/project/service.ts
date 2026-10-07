@@ -1,9 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { basename, extname } from 'node:path';
 import { createProject, createSlot } from '@core/project/defaults';
+import { applyProjectPatches } from '@core/project/patch';
 import type { AssetRef, Project } from '@core/project/types';
 import { ASSET_ID_RE, PROXY_SIZES, type ProxySize } from '@shared/cache';
-import type { AssetStatus, ImportProgress, IndexJob, IndexerResponse, ProjectSnapshot } from '@shared/ipc';
+import type {
+  AssetStatus,
+  ImportProgress,
+  IndexJob,
+  IndexerResponse,
+  PatchBatch,
+  ProjectSnapshot,
+  ProjectStatus,
+} from '@shared/ipc';
 import { createProjectFolder, exists, readProjectFile, writeProjectFile } from './fs';
 import { cacheDir, proxyFile } from './paths';
 import { ProjectSession } from './session';
@@ -17,6 +26,7 @@ export interface IndexerPort {
 
 export interface ServiceEvents {
   snapshot(snapshot: ProjectSnapshot | null): void;
+  status(status: ProjectStatus): void;
   importProgress(progress: ImportProgress): void;
 }
 
@@ -80,6 +90,13 @@ export class ProjectService {
     this.session?.dispose();
     this.session = null;
     this.events.snapshot(null);
+  }
+
+  /** Правки из renderer. Бросает, если проект уже другой или патч запрещён; тогда проект не меняется. */
+  applyPatches(batch: PatchBatch): void {
+    const session = this.session;
+    if (!session || session.dir !== batch.dir) throw new Error('Проект, к которому относится правка, уже закрыт');
+    session.update((project) => applyProjectPatches(project, batch.patches), { patchSeq: batch.seq });
   }
 
   /** Файл прокси для протокола gridtone://. Отдаём только ассеты открытого проекта. */
@@ -182,8 +199,10 @@ export class ProjectService {
     const session: ProjectSession = new ProjectSession(dir, project, assets, {
       write: this.options.write ?? writeProjectFile,
       autosaveDelayMs: this.options.autosaveDelayMs ?? AUTOSAVE_DELAY_MS,
-      onChange: () => {
-        if (this.session === session) this.events.snapshot(session.snapshot());
+      onChange: (kind) => {
+        if (this.session !== session) return;
+        if (kind === 'project') this.events.snapshot(session.snapshot());
+        else this.events.status(session.status());
       },
     });
     this.session = session;

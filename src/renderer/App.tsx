@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { GridView } from './components/GridView';
 import { ImportStatus } from './components/ImportStatus';
+import { Inspector } from './components/Inspector';
 import { Toolbar } from './components/Toolbar';
 import { api, connectStore, useAppStore } from './store';
 
@@ -13,7 +14,17 @@ export function App() {
     <div className="app">
       <Toolbar snapshot={snapshot} />
       <ImportStatus />
-      <main className="workspace">{ready && (snapshot ? <GridView snapshot={snapshot} /> : <Welcome />)}</main>
+      <main className="main">
+        {ready &&
+          (snapshot ? (
+            <>
+              <GridView snapshot={snapshot} />
+              <Inspector />
+            </>
+          ) : (
+            <Welcome />
+          ))}
+      </main>
     </div>
   );
 }

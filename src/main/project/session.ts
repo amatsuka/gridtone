@@ -1,9 +1,12 @@
 import type { Project } from '@core/project/types';
-import type { AssetStatus, ProjectSnapshot, SaveState } from '@shared/ipc';
+import type { AssetStatus, ProjectSnapshot, ProjectStatus, SaveState, SaveStatus } from '@shared/ipc';
+
+/** project — renderer нужен полный снимок; status — изменилось только состояние сохранения. */
+export type ChangeKind = 'project' | 'status';
 
 export interface SessionOptions {
   write: (dir: string, project: Project) => Promise<void>;
-  onChange: () => void;
+  onChange: (kind: ChangeKind) => void;
   autosaveDelayMs: number;
 }
 
@@ -19,6 +22,7 @@ export class ProjectSession {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private saving: Promise<void> | undefined;
   private closed = false;
+  private patchSeq = 0;
 
   constructor(
     readonly dir: string,
@@ -27,13 +31,21 @@ export class ProjectSession {
     private readonly options: SessionOptions,
   ) {}
 
-  /** Изменить проект. Вся работа с проектом идёт через этот метод, иначе изменение не сохранится. */
-  update(change: (project: Project, assets: Record<string, AssetStatus>) => void): void {
+  /**
+   * Изменить проект. Вся работа с проектом идёт через этот метод, иначе изменение не сохранится.
+   * fromRenderer — правка пришла патчами из renderer: он её уже показал, поэтому обратно уходит
+   * только статус, а номер пакета попадёт в следующий снимок (docs/decisions/0008-edit-flow.md).
+   */
+  update(
+    change: (project: Project, assets: Record<string, AssetStatus>) => void,
+    fromRenderer?: { patchSeq: number },
+  ): void {
     change(this.project, this.assets);
+    if (fromRenderer) this.patchSeq = fromRenderer.patchSeq;
     this.dirty = true;
     if (this.saveState !== 'error') this.saveState = 'pending';
     this.schedule();
-    this.options.onChange();
+    this.options.onChange(fromRenderer ? 'status' : 'project');
   }
 
   /** Изменить только статусы ассетов: они не хранятся в project.json. */
@@ -41,7 +53,7 @@ export class ProjectSession {
     const current = this.assets[id];
     if (!current) return;
     this.assets[id] = { ...current, ...patch };
-    this.options.onChange();
+    this.options.onChange('project');
   }
 
   /** Записать несохранённое немедленно. Бросает, если запись не удалась. */
@@ -70,12 +82,15 @@ export class ProjectSession {
   }
 
   snapshot(): ProjectSnapshot {
-    return {
-      dir: this.dir,
-      project: this.project,
-      assets: this.assets,
-      save: this.saveError === undefined ? { state: this.saveState } : { state: this.saveState, error: this.saveError },
-    };
+    return { dir: this.dir, project: this.project, assets: this.assets, save: this.saveStatus(), patchSeq: this.patchSeq };
+  }
+
+  status(): ProjectStatus {
+    return { dir: this.dir, save: this.saveStatus(), patchSeq: this.patchSeq };
+  }
+
+  private saveStatus(): SaveStatus {
+    return this.saveError === undefined ? { state: this.saveState } : { state: this.saveState, error: this.saveError };
   }
 
   private schedule(): void {
@@ -112,6 +127,6 @@ export class ProjectSession {
     if (state === this.saveState && error === this.saveError) return;
     this.saveState = state;
     this.saveError = error;
-    if (!this.closed) this.options.onChange();
+    if (!this.closed) this.options.onChange('status');
   }
 }

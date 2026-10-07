@@ -1,4 +1,5 @@
 // Единый контракт IPC. Любой новый канал объявляется здесь и только здесь.
+import type { ProjectPatch } from '@core/project/patch';
 import type { AssetRef, Project } from '@core/project/types';
 
 // ─── renderer ↔ main ────────────────────────────────────────────────────────
@@ -10,12 +11,37 @@ export interface AssetStatus {
   original: 'ok' | 'missing' | 'changed';
 }
 
+export interface SaveStatus {
+  state: SaveState;
+  error?: string;
+}
+
 /** Состояние открытого проекта. main владеет проектом, renderer получает снимки. */
 export interface ProjectSnapshot {
   dir: string;
   project: Project;
   assets: Record<string, AssetStatus>;
-  save: { state: SaveState; error?: string };
+  save: SaveStatus;
+  /** Номер последнего пакета патчей из renderer, который уже вошёл в project. */
+  patchSeq: number;
+}
+
+/** После правки из renderer main шлёт только это: сам проект renderer уже знает. */
+export interface ProjectStatus {
+  dir: string;
+  save: SaveStatus;
+  /** Как в ProjectSnapshot: пакеты до этого номера включительно main уже применил. */
+  patchSeq: number;
+}
+
+/**
+ * Правка проекта из renderer (docs/decisions/0008-edit-flow.md): патчи Immer к коррекции и кадру слотов.
+ * seq растёт с каждым пакетом; dir не даёт применить пакет к проекту, открытому после отправки.
+ */
+export interface PatchBatch {
+  dir: string;
+  seq: number;
+  patches: ProjectPatch[];
 }
 
 export interface ImportProgress {
@@ -37,12 +63,15 @@ export interface InvokeMap {
   /** Записать несохранённые изменения, не дожидаясь автосохранения. */
   'project:save': { args: []; result: void };
   'project:close': { args: []; result: void };
+  /** Применить правки renderer. Бросает, если патч запрещён или проект уже другой. */
+  'project:patch': { args: [batch: PatchBatch]; result: void };
   /** Импортировать фото; без аргумента — через диалог. null — нет проекта или отменено. */
   'assets:import': { args: [paths?: string[]]; result: { jobId: string } | null };
 }
 
 export interface EventMap {
   'project:changed': ProjectSnapshot | null;
+  'project:status': ProjectStatus;
   'import:progress': ImportProgress;
 }
 
@@ -58,11 +87,13 @@ const invokeChannels = {
   'project:get': true,
   'project:save': true,
   'project:close': true,
+  'project:patch': true,
   'assets:import': true,
 } satisfies Record<InvokeChannel, true>;
 
 const eventChannels = {
   'project:changed': true,
+  'project:status': true,
   'import:progress': true,
 } satisfies Record<EventChannel, true>;
 

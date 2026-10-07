@@ -2,10 +2,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { createSlot } from '@core/project/defaults';
+import { createAdjust, createSlot } from '@core/project/defaults';
+import { PatchError } from '@core/project/patch';
 import { parseProject, serializeProject } from '@core/project/serialize';
 import type { AssetRef } from '@core/project/types';
-import type { ImportProgress, IndexJob, IndexedAsset, IndexerResponse, ProjectSnapshot } from '@shared/ipc';
+import type {
+  ImportProgress,
+  IndexJob,
+  IndexedAsset,
+  IndexerResponse,
+  ProjectSnapshot,
+  ProjectStatus,
+} from '@shared/ipc';
 import { proxyFile } from '../../src/main/project/paths';
 import { ProjectService, type IndexerPort } from '../../src/main/project/service';
 
@@ -30,19 +38,27 @@ let indexer: FakeIndexer;
 let service: ProjectService;
 let snapshots: (ProjectSnapshot | null)[];
 let progress: ImportProgress[];
+let statuses: ProjectStatus[];
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'gridtone-service-'));
   indexer = new FakeIndexer();
   snapshots = [];
   progress = [];
+  statuses = [];
   service = new ProjectService(
     indexer,
-    { snapshot: (s) => snapshots.push(s), importProgress: (p) => progress.push(p) },
+    {
+      snapshot: (s) => snapshots.push(s),
+      status: (s) => statuses.push(s),
+      importProgress: (p) => progress.push(p),
+    },
     { autosaveDelayMs: 5 },
   );
 });
 afterEach(async () => {
+  // Сначала дописываем автосохранение: иначе оно пишет в папку, которую rm уже удаляет.
+  await service.close().catch(() => {});
   await rm(root, { recursive: true, force: true });
 });
 
@@ -181,5 +197,64 @@ describe('открытие', () => {
     await writeFile(join(bad, 'project.json'), 'not json');
     await expect(service.open(bad)).rejects.toThrow();
     expect(service.snapshot()?.project.name).toBe('good');
+  });
+});
+
+describe('правки из renderer', () => {
+  async function projectWithPhoto(dir: string): Promise<void> {
+    await service.create(dir);
+    service.importFiles(['/ph/a.jpg']);
+    const { job, reply } = indexer.last();
+    reply({ type: 'item', jobId: job.jobId, index: 0, ok: true, asset: asset('/ph/a.jpg', 'aaaaaaaaaaaaaaaa') });
+  }
+
+  test('патч применяется, сохраняется на диск, а renderer получает только статус', async () => {
+    const dir = join(root, 'p');
+    await projectWithPhoto(dir);
+    const snapshotsBefore = snapshots.length;
+
+    service.applyPatches({ dir, seq: 3, patches: [{ op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 0.5 }] });
+    expect(snapshots.length).toBe(snapshotsBefore);
+    expect(statuses.at(-1)).toEqual({ dir, save: { state: 'pending' }, patchSeq: 3 });
+    expect(service.snapshot()).toMatchObject({ patchSeq: 3 });
+
+    await service.close();
+    const saved = parseProject(await readFile(join(dir, 'project.json'), 'utf8'));
+    expect(saved.slots[0]?.adjust).toEqual({ ...createAdjust(), exposure: 0.5 });
+  });
+
+  test('снимок после изменения в main несёт номер последнего применённого пакета', async () => {
+    const dir = join(root, 'p');
+    await projectWithPhoto(dir);
+    service.applyPatches({ dir, seq: 9, patches: [{ op: 'replace', path: ['slots', 0, 'adjust', 'temp'], value: 20 }] });
+    service.importFiles(['/ph/b.jpg']);
+    const { job, reply } = indexer.last();
+    reply({ type: 'item', jobId: job.jobId, index: 0, ok: true, asset: asset('/ph/b.jpg', 'bbbbbbbbbbbbbbbb') });
+    expect(snapshots.at(-1)).toMatchObject({ patchSeq: 9 });
+    expect(snapshots.at(-1)?.project.slots[0]?.adjust.temp).toBe(20);
+  });
+
+  test('пакет для другого проекта отвергается', async () => {
+    const dir = join(root, 'p');
+    await projectWithPhoto(dir);
+    expect(() =>
+      service.applyPatches({
+        dir: join(root, 'other'),
+        seq: 1,
+        patches: [{ op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 1 }],
+      }),
+    ).toThrow();
+    expect(service.snapshot()?.project.slots[0]?.adjust.exposure).toBe(0);
+  });
+
+  test('запрещённый патч не меняет проект и не запускает сохранение', async () => {
+    const dir = join(root, 'p');
+    await projectWithPhoto(dir);
+    await service.save();
+    expect(() =>
+      service.applyPatches({ dir, seq: 1, patches: [{ op: 'replace', path: ['assets', 'aaaaaaaaaaaaaaaa', 'path'], value: '/x' }] }),
+    ).toThrow(PatchError);
+    expect(service.snapshot()).toMatchObject({ patchSeq: 0, save: { state: 'saved' } });
+    expect(service.snapshot()?.project.assets['aaaaaaaaaaaaaaaa']?.path).toBe('/ph/a.jpg');
   });
 });

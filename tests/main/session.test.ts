@@ -80,3 +80,33 @@ describe('автосохранение', () => {
     expect(session.snapshot().save.state).toBe('saved');
   });
 });
+
+describe('правки из renderer', () => {
+  test('помечают проект к сохранению, но полный снимок обратно не уходит', async () => {
+    const write = vi.fn(async () => {});
+    const { session, onChange } = setup(write);
+    session.update((p) => void (p.name = 'из renderer'), { patchSeq: 7 });
+    expect(onChange).toHaveBeenLastCalledWith('status');
+    expect(session.snapshot()).toMatchObject({ patchSeq: 7, save: { state: 'pending' } });
+    expect(session.status()).toEqual({ dir: '/p', save: { state: 'pending' }, patchSeq: 7 });
+
+    session.update((p) => void (p.name = 'из main'));
+    expect(onChange).toHaveBeenLastCalledWith('project');
+    expect(session.snapshot().patchSeq).toBe(7);
+
+    await sleep(60);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith('status');
+  });
+
+  test('ошибка в изменении не помечает проект изменённым', () => {
+    const { session, onChange } = setup(async () => {});
+    expect(() =>
+      session.update(() => {
+        throw new Error('нельзя');
+      }, { patchSeq: 1 }),
+    ).toThrow('нельзя');
+    expect(onChange).not.toHaveBeenCalled();
+    expect(session.snapshot()).toMatchObject({ patchSeq: 0, save: { state: 'saved' } });
+  });
+});

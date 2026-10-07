@@ -11,7 +11,7 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
 - npm run dev — запуск
 - npm run typecheck — проверка типов: core, node (main/preload/indexer/tests), web
 - npm test — Vitest
-- npm run test:e2e — сборка + Playwright
+- npm run test:e2e — сборка + Playwright: критерии этапов и сверка шейдера с эталоном
 - npm run build — сборка
 - npm run fixtures -- <папка> [N] — синтетические фото для ручной проверки
 
@@ -19,11 +19,14 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
 - Логика цвета, метрик, гармонии, подбора и LUT — только в src/core, без DOM и Node.
   Это проверяет tsconfig.core.json: импорт fs или обращение к document в core не скомпилируется.
 - Конвейер цвета меняется синхронно в core/color/pipeline.ts и в шейдере;
-  тест сравнения шейдера с эталоном обязан проходить.
+  тест сравнения шейдера с эталоном обязан проходить (tests/e2e/shader-parity.spec.ts).
+  Своих чисел в .glsl нет: константы и матрицы подставляет renderer/gl/program.ts из core.
 - Новый алгоритм в core начинается с теста на синтетических данных.
 - Все каналы IPC объявлены в shared/ipc.ts; renderer не трогает fs напрямую.
 - Оригиналы фото никогда не перезаписываются.
 - Проект меняется только через ProjectSession.update в main, иначе изменение не попадёт в автосохранение.
+  Renderer правит проект только через editProject (store.ts): патчи уходят в main по project:patch (ADR 0008);
+  новое редактируемое поле добавляется в разрешённые пути core/project/patch.ts и в validate.ts.
 - Прокси строятся только в src/indexer/proxies.ts; pipelineColourspace('srgb') там обязателен (ADR 0004).
 - Новая зависимость — только с записью в docs/decisions/. npm 12 блокирует install-скрипты:
   если пакету он нужен, разрешать осознанно через `npm install-scripts approve <pkg>`.
