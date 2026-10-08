@@ -137,7 +137,6 @@ function EditorStage({
   rotating: boolean;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<PhotoRenderer | null>(null);
   const [glFailed, setGlFailed] = useState(false);
   const [size, setSize] = useState<[number, number]>([0, 0]);
@@ -155,19 +154,28 @@ function EditorStage({
     return () => observer.disconnect();
   }, []);
 
+  // Холст у каждого PhotoRenderer свой: dispose отпускает контекст, и тот же холст вернул бы
+  // потерянный контекст. В dev StrictMode монтирует эффект дважды — так редактор не ломается.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    const canvas = document.createElement('canvas');
+    canvas.className = 'editor-canvas';
+    canvas.dataset['testid'] = 'editor-canvas';
+    canvas.setAttribute('aria-hidden', 'true');
+    stage.prepend(canvas);
     try {
       rendererRef.current = new PhotoRenderer(canvas);
     } catch (err) {
       console.error(err);
+      canvas.remove();
       setGlFailed(true);
       return;
     }
     return () => {
       rendererRef.current?.dispose();
       rendererRef.current = null;
+      canvas.remove();
     };
   }, []);
 
@@ -198,7 +206,6 @@ function EditorStage({
 
   return (
     <div className="editor-stage" ref={stageRef} data-testid="editor-stage">
-      <canvas ref={canvasRef} className="editor-canvas" data-testid="editor-canvas" aria-hidden="true" />
       {glFailed && proxyReady && slot.assetId && (
         // Без WebGL2 — картинка без коррекции, как и в сетке.
         <img
