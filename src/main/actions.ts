@@ -7,7 +7,7 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron';
-import type { ExportStarted, ProjectSnapshot } from '@shared/ipc';
+import type { ExportStarted, LutImportResult, ProjectSnapshot } from '@shared/ipc';
 import { parseExportRequest, type ExportService } from './export';
 import { IMPORT_EXTENSIONS, type ProjectService } from './project/service';
 
@@ -113,7 +113,7 @@ export function createActions(service: ProjectService, exporter: ExportService, 
       const parsed = parseExportRequest(request);
       const before = service.snapshot();
       if (!before || before.dir !== parsed.dir) return null;
-      exporter.plan(before.project, parsed);
+      await exporter.plan(before.project, parsed);
       const result = await showOpen({
         title: 'Папка для экспорта',
         message: 'Файлы лягут в новую подпапку: старые экспорты не перезаписываются',
@@ -134,6 +134,21 @@ export function createActions(service: ProjectService, exporter: ExportService, 
         await reportError('Не удалось начать экспорт', err);
         return null;
       }
+    },
+
+    /** «Импорт LUT…»: файл спрашивает main, ошибка разбора возвращается в renderer и показывается там. */
+    async importLut(): Promise<LutImportResult | null> {
+      if (!service.hasProject) return null;
+      const result = await showOpen({
+        title: 'Импорт LUT',
+        message: 'Файл .cube станет новым образом проекта; его копия ляжет в папку проекта',
+        buttonLabel: 'Импортировать',
+        properties: ['openFile'],
+        filters: [{ name: '3D LUT (.cube)', extensions: ['cube'] }],
+      });
+      const path = result.filePaths[0];
+      if (result.canceled || path === undefined) return null;
+      return service.importLut(path);
     },
 
     async saveProject(): Promise<void> {

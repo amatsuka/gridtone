@@ -2,6 +2,7 @@
 // средний ΔE2000 < 0.5, максимум < 2. Шейдер рисует в Electron на скрытой странице parity.html.
 // Этап 2б: то же для режимов просмотра 3 и 4 (core/color/view.ts). В режиме 3 пороги прежние; в режиме 4
 // сверяется номер уровня, и расхождение допустимо только у пикселей, чьё L ближе 10⁻⁴ к границе уровня.
+// Этап 3б: шаг 9 — импортированный LUT образа — на синтетических LUT, с коррекцией образа и без неё.
 import { join } from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import { bakePipeline, type PipelineParams } from '../../src/core/color/bake';
@@ -20,6 +21,7 @@ import {
 } from '../../src/core/color/view';
 import { parityCases } from '../golden/cases';
 import { goldenImages, type GoldenImage } from '../golden/images';
+import { lutParityCases, parityLuts } from '../golden/luts';
 
 const ROOT = join(__dirname, '../..');
 const MEAN_LIMIT = 0.5;
@@ -27,9 +29,20 @@ const MAX_LIMIT = 2;
 /** Режим 4: у пикселей ближе этого к границе уровня float32 на GPU может выбрать соседний уровень. */
 const LEVEL_BOUNDARY_TOLERANCE = 1e-4;
 
+/** LUT для страницы сверки — как ParityLut в parity.ts: узлы float64 подряд в base64. */
+interface ParityLut {
+  size: number;
+  domainMin: [number, number, number];
+  domainMax: [number, number, number];
+  data: string;
+}
+
 /** То, что parity.ts кладёт в window. */
 interface ParityWindow {
-  gridtoneParity: { render(width: number, height: number, rgba8: string, params: PipelineParams, view: ViewOutput): string };
+  gridtoneParity: {
+    loadLut(id: string, lut: ParityLut): void;
+    render(width: number, height: number, rgba8: string, params: PipelineParams, view: ViewOutput, lutId?: string): string;
+  };
 }
 
 interface Stats {
@@ -102,7 +115,7 @@ function compareLevels(image: GoldenImage, params: PipelineParams, gpu: Float32A
   return stats;
 }
 
-test('шейдер совпадает с эталоном core на эталонных изображениях, в том числе в режимах 3 и 4', async () => {
+test('шейдер совпадает с эталоном core на эталонных изображениях, в режимах 3 и 4 и с LUT образа', async () => {
   const app = await electron.launch({ args: ['.'], cwd: ROOT });
   try {
     await app.firstWindow();
@@ -121,25 +134,39 @@ test('шейдер совпадает с эталоном core на эталон
 
     const failures: string[] = [];
     const rows: string[] = [];
-    const render = (image: GoldenImage, rgba8: string, params: PipelineParams, view: ViewOutput) =>
+    const render = (image: GoldenImage, rgba8: string, params: PipelineParams, view: ViewOutput, lutId?: string) =>
       page
         .evaluate(
-          ([w, h, data, p, v]) => (globalThis as unknown as ParityWindow).gridtoneParity.render(w, h, data, p, v),
-          [image.width, image.height, rgba8, params, view] as const,
+          ([w, h, data, p, v, id]) => (globalThis as unknown as ParityWindow).gridtoneParity.render(w, h, data, p, v, id),
+          [image.width, image.height, rgba8, params, view, lutId] as const,
         )
         .then((output) => new Float32Array(new Uint8Array(Buffer.from(output, 'base64')).buffer));
+
+    // LUT грузятся на страницу один раз; core получает тот же LUT в params.lut.
+    const luts = parityLuts();
+    for (const [id, lut] of Object.entries(luts)) {
+      const data = Buffer.from(lut.data.buffer, lut.data.byteOffset, lut.data.byteLength).toString('base64');
+      const payload: ParityLut = { size: lut.size, domainMin: lut.domainMin, domainMax: lut.domainMax, data };
+      await page.evaluate(([i, l]) => (globalThis as unknown as ParityWindow).gridtoneParity.loadLut(i, l), [id, payload] as const);
+    }
+    const cases = [
+      ...parityCases().map(({ name, params }) => ({ name, params, lutId: undefined as string | undefined })),
+      ...lutParityCases(),
+    ];
+
     for (const image of goldenImages()) {
       const rgba8 = Buffer.from(image.data).toString('base64');
-      for (const { name, params } of parityCases()) {
+      for (const { name, params, lutId } of cases) {
+        const cpuParams: PipelineParams = lutId === undefined ? params : { ...params, lut: luts[lutId] };
         for (const view of ['color', 'luminance'] as const) {
-          const stats = compare(image, params, await render(image, rgba8, params, view), view);
+          const stats = compare(image, cpuParams, await render(image, rgba8, params, view, lutId), view);
           const label = `${view === 'color' ? '' : 'яркость: '}${name}`;
           rows.push(`${image.name.padEnd(12)} ${label.padEnd(44)} средний ${stats.mean.toFixed(4)}  максимум ${stats.max.toFixed(4)}`);
           if (stats.mean >= MEAN_LIMIT || stats.max >= MAX_LIMIT) {
             failures.push(`${image.name} / ${label}: средний ${stats.mean.toFixed(3)}, максимум ${stats.max.toFixed(3)}; худший пиксель ${stats.worst}`);
           }
         }
-        const levels = compareLevels(image, params, await render(image, rgba8, params, 'posterize'));
+        const levels = compareLevels(image, cpuParams, await render(image, rgba8, params, 'posterize', lutId));
         const label = `постеризация: ${name}`;
         rows.push(`${image.name.padEnd(12)} ${label.padEnd(44)} не тот уровень ${levels.wrong}, у границы ${levels.nearBoundary}`);
         if (levels.wrong > 0) failures.push(`${image.name} / ${label}: не тот уровень у ${levels.wrong} пикс.; первый ${levels.firstWrong}`);

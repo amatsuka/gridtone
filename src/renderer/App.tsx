@@ -6,6 +6,7 @@ import { ImportStatus } from './components/ImportStatus';
 import { Inspector } from './components/Inspector';
 import { PhotoEditor } from './components/PhotoEditor';
 import { Toolbar } from './components/Toolbar';
+import { connectLuts } from './luts';
 import { connectMetrics } from './metrics';
 import { connectShortcuts } from './shortcuts';
 import { api, connectStore, useAppStore } from './store';
@@ -13,6 +14,7 @@ import { api, connectStore, useAppStore } from './store';
 export function App() {
   useEffect(() => connectStore(), []);
   useEffect(() => connectShortcuts(), []);
+  useEffect(() => connectLuts(), []);
   useEffect(() => connectMetrics(), []);
   const ready = useAppStore((state) => state.ready);
   const snapshot = useAppStore((state) => state.snapshot);

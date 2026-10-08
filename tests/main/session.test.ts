@@ -5,7 +5,7 @@ import { ProjectSession } from '../../src/main/project/session';
 
 function setup(write: (dir: string, project: Project) => Promise<void>, autosaveDelayMs = 20) {
   const onChange = vi.fn();
-  const session = new ProjectSession('/p', createProject('p'), {}, { write, onChange, autosaveDelayMs });
+  const session = new ProjectSession('/p', createProject('p'), {}, {}, { write, onChange, autosaveDelayMs });
   return { session, onChange };
 }
 

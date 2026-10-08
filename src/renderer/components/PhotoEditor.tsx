@@ -21,6 +21,7 @@ import { proxyUrl } from '@shared/cache';
 import type { ProjectSnapshot } from '@shared/ipc';
 import { closeEditor, editSlotAdjust, editSlotCrop, setEditorTab, stepEditor } from '../commands';
 import { PhotoRenderer } from '../gl/PhotoRenderer';
+import { useLookLut } from '../luts';
 import { useAppStore, type EditorTab } from '../store';
 import { AdjustPanel } from './AdjustPanel';
 import { viewOutput } from './GridCanvas';
@@ -171,7 +172,10 @@ function EditorStage({
   }, []);
 
   const rect = fitRect(size, asset.w, asset.h);
-  const look = slot.lookId ? project.looks.find((l) => l.id === slot.lookId)?.adjust : undefined;
+  const lookEntry = slot.lookId ? project.looks.find((l) => l.id === slot.lookId) : undefined;
+  const look = lookEntry?.adjust;
+  // Шаг 9: пока таблица LUT едет из main, фото не рисуется — как плитка в сетке.
+  const lut = useLookLut(lookEntry);
   const neighbors = neighborAssets(project, slot);
 
   // Сцена обновляется после каждого рендера: кадры схлопываются в один requestAnimationFrame.
@@ -179,11 +183,12 @@ function EditorStage({
     const renderer = rendererRef.current;
     if (!renderer || !slot.assetId) return;
     renderer.setScene(
-      proxyReady
+      proxyReady && (showOriginal || lut.state !== 'loading')
         ? {
             assetId: slot.assetId,
             preload: neighbors,
             adjusts: showOriginal ? [] : look ? [slot.adjust, look] : [slot.adjust],
+            lut: !showOriginal && lut.state === 'ready' ? lut : null,
             view: viewOutput(viewMode),
             rect,
           }

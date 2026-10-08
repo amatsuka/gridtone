@@ -10,12 +10,13 @@
 //  6. Кривые: общая, затем R, G, B.
 //  7. HSL и круги в OKLCH.
 //  8. Сочность и насыщенность.
-//  (9. Импортированный LUT — этап 3.)
+//  9. Импортированный LUT образа: тетраэдрическая интерполяция, срез в 0..1 (docs/decisions/0015-lut-import.md).
 //
-// Шаги 2–8 выполняются дважды: с поправкой фото, затем с образом.
+// Шаги 2–8 выполняются дважды: с поправкой фото, затем с образом. Шаг 9 есть только у образа.
 import { bakePipeline, CURVE_TABLE_SIZE, type BakedAdjust, type BakedPipeline, type PipelineParams } from './bake';
 import { applyChroma } from './chroma';
 import { applyGrading } from './grading';
+import { sampleLut, type Lut3D } from '../lut/lut3d';
 import { applyHsl } from './hsl';
 import { sampleTable } from './math';
 import { linearSrgbToOklab, oklabToLinearSrgb, oklabToOklch, oklchToOklab } from './oklab';
@@ -61,9 +62,23 @@ export function applyPass(rgb: Rgb, baked: BakedAdjust): Rgb {
   return c;
 }
 
+/**
+ * Шаг 9: LUT образа. Вход вне домена срезается к краю (sampleLut), выход — в 0..1, как на шагах 5 и 8.
+ * Шейдер повторяет тот же выбор тетраэдра и те же веса.
+ */
+export function applyLutStep(rgb: Rgb, lut: Lut3D): Rgb {
+  const [r, g, b] = sampleLut(lut, rgb, 'tetrahedral');
+  return [clamp01(r), clamp01(g), clamp01(b)];
+}
+
+function clamp01(v: number): number {
+  return v <= 0 ? 0 : v >= 1 ? 1 : v;
+}
+
 export function applyBaked(rgb: Rgb, baked: BakedPipeline): Rgb {
   const photo = applyPass(rgb, baked.photo);
-  return baked.look ? applyPass(photo, baked.look) : photo;
+  const look = baked.look ? applyPass(photo, baked.look) : photo;
+  return baked.lut ? applyLutStep(look, baked.lut) : look;
 }
 
 /** Удобная форма для единичных цветов. Для изображений подготовьте параметры один раз: bakePipeline. */

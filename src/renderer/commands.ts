@@ -9,7 +9,7 @@ import { isValidLookName } from '@core/project/validate';
 import type { MenuCommand } from '@shared/ipc';
 import { isViewMode, type ViewMode } from '@shared/view';
 import { clickSelection, EMPTY_SELECTION, selectAll } from './selection';
-import { editProject, redo, undo, useAppStore, type EditorTab, type InspectorTab } from './store';
+import { api, editProject, redo, undo, useAppStore, type EditorTab, type InspectorTab } from './store';
 
 function project(): Project | undefined {
   return useAppStore.getState().snapshot?.project;
@@ -186,6 +186,35 @@ export function assignLookToSelection(lookId: string | null): void {
   if (ids.length > 0) editProject((draft) => assignLook(draft, ids, lookId));
 }
 
+// ─── LUT образов (docs/decisions/0015-lut-import.md) ────────────────────────
+
+/**
+ * «Импорт LUT…» и «Файл → Импортировать LUT…»: файл спрашивает main, новый образ появляется в конце
+ * списка и сразу открывается. Импорт в историю не входит, как импорт фото. Ошибка — во вкладке «Образ».
+ */
+export async function importLut(): Promise<void> {
+  if (!project()) return;
+  const result = await api.invoke('lut:import');
+  if (!result) return;
+  if (!result.ok) {
+    useAppStore.setState({ lutImportError: result.error, inspectorTab: 'look' });
+    return;
+  }
+  useAppStore.setState({ activeLookId: result.lookId, inspectorTab: 'look', lutImportError: null });
+}
+
+export function dismissLutImportError(): void {
+  useAppStore.setState({ lutImportError: null });
+}
+
+/** «Снять LUT»: обычная правка, отменяется ⌘Z. Запись реестра остаётся — на ней держится отмена. */
+export function detachLut(lookId: string): void {
+  editProject((draft) => {
+    const look = draft.looks.find((l) => l.id === lookId);
+    if (look && look.importedLut !== undefined) delete look.importedLut;
+  });
+}
+
 // ─── Редактор фото ──────────────────────────────────────────────────────────
 
 /** Посты с фото в порядке сетки: по ним ходят ←/→ в редакторе. */
@@ -286,6 +315,9 @@ export function runMenuCommand(command: MenuCommand): void {
       break;
     case 'export':
       openExportDialog();
+      break;
+    case 'importLut':
+      void importLut();
       break;
   }
 }

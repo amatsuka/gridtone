@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { lookPipeline } from '@core/lut/bake';
+import { identityLut, type Lut3D } from '@core/lut/lut3d';
 import { createAdjust, createProject } from '@core/project/defaults';
 import type { Project } from '@core/project/types';
 import type { ExportProgress, IndexerResponse, LutExportJob } from '@shared/ipc';
@@ -64,7 +65,7 @@ describe('запрос экспорта', () => {
     expect(items[0]?.params).toEqual(lookPipeline(p.looks[0]!.adjust));
   });
 
-  test('нечего экспортировать, образа нет, образ дважды — ошибка', () => {
+  test('нечего экспортировать, образа нет, образ дважды — ошибка', async () => {
     const p = project();
     expect(() => lutExportItems(p, { looks: [{ id: 'a', size: 33 }], cube: false, hald: false })).toThrow(/формат/);
     expect(() => lutExportItems(p, { looks: [], cube: true, hald: false })).toThrow(/образ/);
@@ -79,7 +80,46 @@ describe('запрос экспорта', () => {
         hald: false,
       }),
     ).toThrow(/дважды/);
-    expect(() => new ExportService(new FakePort(), () => {}).plan(p, { dir: '/p' })).toThrow(/Нечего/);
+    await expect(new ExportService(new FakePort(), () => {}).plan(p, { dir: '/p' })).rejects.toThrow(/Нечего/);
+  });
+});
+
+describe('образ с импортированным LUT (ADR 0015)', () => {
+  const LUT_ID = '0123456789abcdef';
+  function withLut(): Project {
+    const p = project();
+    p.luts[LUT_ID] = { id: LUT_ID, name: 'сепия.cube', size: 3, hash: LUT_ID.padEnd(64, '0'), importedAt: '2026-10-08T00:00:00.000Z' };
+    p.looks[0]!.importedLut = LUT_ID;
+    return p;
+  }
+  const request = { dir: '/p', lut: { looks: [{ id: 'a', size: 33 as const }, { id: 'c', size: 33 as const }], cube: true, hald: false } };
+
+  test('LUT образа запекается вместе с его коррекцией; без загруженного LUT — ошибка', async () => {
+    const lut = identityLut(3);
+    const loaded: string[] = [];
+    const service = new ExportService(new FakePort(), () => {}, {
+      luts: {
+        loadLut: async (id: string): Promise<Lut3D> => {
+          loaded.push(id);
+          return lut;
+        },
+      },
+    });
+    const items = await service.plan(withLut(), request);
+    expect(loaded).toEqual([LUT_ID]);
+    expect(items[0]?.params).toEqual(lookPipeline(withLut().looks[0]!.adjust, lut));
+    expect(items[1]?.params.lut).toBeUndefined();
+    expect(() => lutExportItems(withLut(), request.lut)).toThrow(/не загружен/);
+  });
+
+  test('копия LUT пропала — экспорт не начинается, папка не создаётся', async () => {
+    const port = new FakePort();
+    const service = new ExportService(port, () => {}, {
+      luts: { loadLut: () => Promise.reject(new Error('LUT «сепия.cube»: файла нет в папке luts/ проекта')) },
+    });
+    await expect(service.start(root, withLut(), request)).rejects.toThrow(/сепия\.cube/);
+    expect(port.jobs).toHaveLength(0);
+    expect(await readdir(root)).toEqual([]);
   });
 });
 
@@ -94,7 +134,7 @@ describe('ExportService', () => {
   test('запуск: подпапка по имени проекта и времени, задача в utility process, ход событиями', async () => {
     const port = new FakePort();
     const progress: ExportProgress[] = [];
-    const service = new ExportService(port, (p) => progress.push(p), () => new Date(2026, 9, 8, 7, 5, 3));
+    const service = new ExportService(port, (p) => progress.push(p), { now: () => new Date(2026, 9, 8, 7, 5, 3) });
     const request = { dir: '/p', lut: { looks: [{ id: 'a', size: 33 as const }], cube: true, hald: true } };
 
     const first = await service.start(root, project(), request);

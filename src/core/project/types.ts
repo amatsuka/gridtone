@@ -1,5 +1,6 @@
 // Модель данных проекта — docs/spec.md, «Модель данных».
-// Отступление от спеки: Project.assets (docs/decisions/0003-assets-in-project.md).
+// Отступления от спеки: Project.assets (docs/decisions/0003-assets-in-project.md),
+// Project.luts (docs/decisions/0015-lut-import.md).
 
 export type Ratio = '3:4' | '1:1';
 export type Vec3 = [number, number, number]; // OKLab: L 0..1, a, b
@@ -12,6 +13,7 @@ export interface Project {
   assets: Record<string, AssetRef>; // ключ — AssetRef.id
   slots: Slot[]; // порядок = порядок в сетке, 0 — верхний левый
   looks: Look[]; // общие образы, каждый экспортируется в LUT
+  luts: Record<string, LutRef>; // импортированные LUT, ключ — LutRef.id; меняет только main
   pattern?: Pattern; // активная цель
   reference?: ReferenceGrid; // разобранная чужая сетка
 }
@@ -27,6 +29,15 @@ export interface AssetRef {
   h: number;
   format: ImageFormat;
   icc: 'embedded' | 'assumed-srgb'; // откуда взят профиль при переводе в sRGB
+  importedAt: string; // ISO 8601
+}
+
+/** Импортированный `.cube`: копия лежит в luts/<id>.cube папки проекта (ADR 0015). */
+export interface LutRef {
+  id: string; // первые 16 hex-символов hash
+  name: string; // имя исходного файла, например «сепия.cube»
+  size: number; // LUT_3D_SIZE, 2…65
+  hash: string; // SHA-256 файла, hex
   importedAt: string; // ISO 8601
 }
 
@@ -75,7 +86,7 @@ export interface Look {
   id: string;
   name: string;
   adjust: Adjust;
-  importedLut?: string;
+  importedLut?: string; // id из Project.luts: шаг 9 конвейера в проходе образа
 }
 
 export interface SlotTarget {

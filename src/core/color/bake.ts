@@ -1,6 +1,7 @@
 // Подготовка параметров коррекции: одна и та же для эталона на CPU и для шейдера.
 // Всё, что зависит только от ползунков (коэффициенты, таблицы), считается здесь один раз,
 // а не в каждом пикселе. Шаг, равный тождеству, получает null и пропускается целиком.
+import type { Lut3D } from '../lut/lut3d';
 import type { Adjust } from '../project/types';
 import { bakeGrading, type BakedGrading } from './grading';
 import { bakeHslTable } from './hsl';
@@ -42,19 +43,23 @@ export interface PipelineParams {
   photo: Adjust;
   /** Образ — второй проход поверх первого. */
   look?: Adjust | undefined;
+  /** Шаг 9: импортированный LUT образа, последний в его проходе (docs/decisions/0015-lut-import.md). */
+  lut?: Lut3D | undefined;
 }
 
 export interface BakedPipeline {
   photo: BakedAdjust;
   look: BakedAdjust | null;
+  /** LUT готов к выборке как есть: таблица уже в Lut3D. */
+  lut: Lut3D | null;
 }
 
 export function bakeAdjust(adjust: Adjust): BakedAdjust {
   return { linear: bakeLinear(adjust), curves: bakeCurves(adjust.curves), color: bakeColor(adjust) };
 }
 
-export function bakePipeline({ photo, look }: PipelineParams): BakedPipeline {
-  return { photo: bakeAdjust(photo), look: look ? bakeAdjust(look) : null };
+export function bakePipeline({ photo, look, lut }: PipelineParams): BakedPipeline {
+  return { photo: bakeAdjust(photo), look: look ? bakeAdjust(look) : null, lut: lut ?? null };
 }
 
 function bakeLinear(adjust: Adjust): BakedLinear | null {

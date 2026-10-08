@@ -2,13 +2,17 @@
 // DOM остаётся для номеров, бейджей и кликов; холст лежит под ним (docs/spec.md, «Рендер»).
 import type { ViewOutput } from '@core/color/view';
 import { gridWindowTransform } from '@core/project/crop';
-import type { Adjust, Project, Slot } from '@core/project/types';
-import type { AssetStatus } from '@shared/ipc';
+import type { Look, Project, Slot } from '@core/project/types';
+import type { AssetStatus, LutFileStatus } from '@shared/ipc';
+import { lookLut, type LutEntry } from '../luts';
 import { PipelineGpu } from './gpu';
 
 export interface GridScene {
   project: Project;
   assets: Record<string, AssetStatus>;
+  /** LUT образов (ADR 0015): статус копий из main и загруженные таблицы. */
+  lutFiles: Record<string, LutFileStatus>;
+  luts: Readonly<Record<string, LutEntry>>;
   /** Пост-обработка режимов 3 и 4 (ADR 0012). */
   view: ViewOutput;
   /** До/после: фото без поправок и образов. */
@@ -75,7 +79,7 @@ export class GridRenderer {
     if (!scene || !root) return;
 
     const slots = new Map(scene.project.slots.map((slot) => [slot.id, slot]));
-    const looks = new Map(scene.project.looks.map((look) => [look.id, look.adjust]));
+    const looks = new Map(scene.project.looks.map((look) => [look.id, look]));
     const bounds = canvas.getBoundingClientRect();
     gpu.begin(scene.view);
 
@@ -105,7 +109,7 @@ export class GridRenderer {
     gpu: PipelineGpu,
     scene: GridScene,
     slot: Slot,
-    looks: Map<string, Adjust>,
+    looks: Map<string, Look>,
     rect: [number, number, number, number],
   ): boolean {
     const { assetId } = slot;
@@ -114,9 +118,12 @@ export class GridRenderer {
     if (!proxy) return false;
 
     const look = slot.lookId ? looks.get(slot.lookId) : undefined;
-    const adjusts = scene.original ? [] : look ? [slot.adjust, look] : [slot.adjust];
+    // Шаг 9: пока таблица LUT едет из main, плитка не рисуется — иначе мелькнула бы без LUT.
+    const lut = scene.original ? null : lookLut(look, scene.lutFiles, scene.luts);
+    if (lut?.state === 'loading') return false;
+    const adjusts = scene.original ? [] : look ? [slot.adjust, look.adjust] : [slot.adjust];
     const uv = gridWindowTransform(proxy.width, proxy.height, slot.crop, scene.project.grid.ratio);
-    gpu.draw(proxy, adjusts, rect, [this.canvas.width, this.canvas.height], uv);
+    gpu.draw(proxy, adjusts, rect, [this.canvas.width, this.canvas.height], uv, lut?.state === 'ready' ? lut : null);
     return true;
   }
 

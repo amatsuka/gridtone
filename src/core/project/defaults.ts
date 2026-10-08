@@ -72,5 +72,6 @@ export function createProject(name: string): Project {
     assets: {},
     slots: [],
     looks: [],
+    luts: {},
   };
 }

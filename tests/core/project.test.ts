@@ -32,6 +32,14 @@ function sampleProject(): Project {
   ];
   project.slots.push(slot, createSlot('slot-2'));
   project.looks.push({ id: 'look-1', name: 'Тёплый', adjust: createAdjust() });
+  project.luts['fedcba9876543210'] = {
+    id: 'fedcba9876543210',
+    name: 'сепия.cube',
+    size: 17,
+    hash: 'fedcba9876543210'.padEnd(64, '1'),
+    importedAt: '2026-10-08T12:00:00.000Z',
+  };
+  project.looks.push({ id: 'look-2', name: 'Сепия', adjust: createAdjust(), importedLut: 'fedcba9876543210' });
   project.pattern = { source: 'generator', periodRows: 2, postingMode: 'batch', cells: [] };
   return project;
 }
@@ -99,6 +107,41 @@ describe('project.json', () => {
     const unnamed = JSON.parse(serializeProject(sampleProject())) as { looks: Record<string, unknown>[] };
     delete unnamed.looks[0]?.['name'];
     expect(() => parseProject(JSON.stringify(unnamed))).toThrow(/некорректный образ/);
+  });
+
+  test('проект без реестра LUT (до этапа 3б) открывается с пустым реестром', () => {
+    const old = JSON.parse(serializeProject(sampleProject())) as Record<string, unknown> & { looks: Record<string, unknown>[] };
+    delete old['luts'];
+    old.looks = old.looks.filter((look) => look['importedLut'] === undefined);
+    const parsed = parseProject(JSON.stringify(old));
+    expect(parsed.luts).toEqual({});
+    expect(createProject('новый').luts).toEqual({});
+  });
+
+  test('отклоняет образ со ссылкой на LUT не из реестра', () => {
+    const project = sampleProject();
+    project.luts = {};
+    expect(() => parseProject(serializeProject(project))).toThrow(/неизвестный LUT/);
+    const notString = JSON.parse(serializeProject(sampleProject())) as { looks: Record<string, unknown>[] };
+    notString.looks[1]!['importedLut'] = 17;
+    expect(() => parseProject(JSON.stringify(notString))).toThrow(/неизвестный LUT/);
+  });
+
+  test.each([
+    ['ключ не совпадает с id', { id: '0000000000000000' }],
+    ['id не из 16 hex', { id: 'Сепия' }],
+    ['размер вне 2…65', { size: 66 }],
+    ['дробный размер', { size: 17.5 }],
+    ['нет имени', { name: undefined }],
+    ['хэш не из 64 hex', { hash: 'abc' }],
+    ['хэш не начинается с id', { hash: '0'.repeat(64) }],
+    ['нет даты', { importedAt: undefined }],
+  ])('отклоняет запись реестра LUT: %s', (_, patch) => {
+    const project = JSON.parse(serializeProject(sampleProject())) as { luts: Record<string, Record<string, unknown>> };
+    const ref = project.luts['fedcba9876543210']!;
+    Object.assign(ref, patch);
+    for (const [key, value] of Object.entries(patch)) if (value === undefined) delete ref[key];
+    expect(() => parseProject(JSON.stringify(project))).toThrow(/некорректный LUT/);
   });
 
   test('отклоняет ассет, чей ключ не совпадает с id', () => {

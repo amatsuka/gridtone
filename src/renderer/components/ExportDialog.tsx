@@ -4,6 +4,7 @@ import type { Look } from '@core/project/types';
 import type { ExportProgress, ExportStarted } from '@shared/ipc';
 import { closeExportDialog } from '../commands';
 import { lutCheckKey, requestLutCheck, useLutChecks, type LutCheckResult } from '../lutCheck';
+import { lookLut, useLutStore, type LookLut } from '../luts';
 import { api, useAppStore } from '../store';
 
 /** Экран «Экспорт» (spec, «Экраны»). Этап 3а — раздел LUT (docs/decisions/0014-lut-export.md). */
@@ -18,6 +19,8 @@ function ExportForm() {
   const snapshot = useAppStore((state) => state.snapshot);
   const progress = useAppStore((state) => state.exportProgress);
   const checks = useLutChecks((state) => state.byKey);
+  const lutFiles = useAppStore((state) => state.snapshot?.luts);
+  const lutTables = useLutStore((state) => state.byId);
   const looks = snapshot?.project.looks ?? [];
   // По умолчанию отмечены все образы и оба формата.
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(looks.map((look) => look.id)));
@@ -27,13 +30,22 @@ function ExportForm() {
   const [hald, setHald] = useState(true);
   const [run, setRun] = useState<RunState>({ state: 'idle' });
 
+  // LUT образа входит в проверку (ADR 0015): пока его таблица едет из main, проверка ждёт.
   useEffect(() => {
-    for (const look of looks) requestLutCheck(look.adjust);
-  }, [looks]);
+    for (const look of looks) {
+      const lut = lookLut(look, lutFiles, lutTables);
+      if (lut.state === 'none' || lut.state === 'ready') requestLutCheck(look.adjust, loaded(lut));
+    }
+  }, [looks, lutFiles, lutTables]);
 
   if (!snapshot) return null;
   const chosen = looks.filter((look) => selected.has(look.id));
-  const resultOf = (look: Look): LutCheckResult | undefined => checks[lutCheckKey(look.adjust)];
+  const resultOf = (look: Look): LutCheckResult | undefined => {
+    const lut = lookLut(look, lutFiles, lutTables);
+    if (lut.state === 'missing') return { ok: false, error: lut.error };
+    if (lut.state === 'loading') return undefined;
+    return checks[lutCheckKey(look.adjust, loaded(lut))];
+  };
   const sizeOf = (look: Look): LutExportSize | undefined => {
     const result = resultOf(look);
     return sizes[look.id] ?? (result?.ok ? result.choice.size : result ? 33 : undefined);
@@ -192,6 +204,10 @@ function LookRow({
 }
 
 const f2 = (v: number) => v.toFixed(2);
+
+function loaded(lut: LookLut) {
+  return lut.state === 'ready' ? lut : null;
+}
 
 /** «33: подходит · ΔE ср. 0.03, 99% 0.35» и строкой ниже трилинейная, как в Resolve. */
 function CheckLine({ size, check }: { size: LutExportSize; check: LutCheck }) {

@@ -1,7 +1,8 @@
 // Патчи проекта из renderer (docs/decisions/0008-edit-flow.md). Формат — как у Immer, но core от Immer
 // не зависит. Проверяется не путь, а результат пакета (docs/decisions/0010-patch-invariants.md):
-// renderer переставляет слоты, правит их коррекцию, кадр и образ, создаёт и удаляет образы.
-// Оригиналы, состав сетки, статусы и LUT образов остаются за main.
+// renderer переставляет слоты, правит их коррекцию, кадр и образ, создаёт и удаляет образы, назначает
+// и снимает LUT из реестра (docs/decisions/0015-lut-import.md). Оригиналы, состав сетки, статусы и сам
+// реестр LUT остаются за main.
 import { cloneJson, isRecord, sameJson, sameJsonExcept } from './json';
 import type { Look, Project, Slot } from './types';
 import { isValidAdjust, isValidCrop, isValidLook } from './validate';
@@ -106,7 +107,10 @@ function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks:
     const prev = looksBefore.get(id);
     if (prev && sameJson(prev, look)) continue;
     if (!isValidLook(look)) throw new PatchError(`некорректный образ ${id}`);
-    if (look.importedLut !== prev?.importedLut) throw new PatchError(`LUT образа ${id} меняет только main`);
+    // Назначить и снять можно только LUT из реестра: сам реестр корнем патча быть не может.
+    if (look.importedLut !== undefined && !Object.hasOwn(before.luts, look.importedLut)) {
+      throw new PatchError(`образ ${id} ссылается на неизвестный LUT`);
+    }
   }
 
   const slotsBefore = new Map(before.slots.map((slot) => [slot.id, slot]));

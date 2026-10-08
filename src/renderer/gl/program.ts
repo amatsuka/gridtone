@@ -7,6 +7,7 @@ import { LAB_TO_LMS, LINEAR_SRGB_TO_LMS, LMS_TO_LAB, LMS_TO_LINEAR_SRGB } from '
 import { LUMINANCE, type Mat3 } from '@core/color/srgb';
 import { TONE_MIN_Y } from '@core/color/tone';
 import { POSTERIZE_LEVELS, VIEW_OUTPUT_CODES, type ViewOutput } from '@core/color/view';
+import type { Lut3D } from '@core/lut/lut3d';
 import type { Affine } from '@core/project/crop';
 import FRAGMENT from './pipeline.frag.glsl?raw';
 import VERTEX from './pipeline.vert.glsl?raw';
@@ -25,6 +26,7 @@ const COLOR = 8;
 const HSL = 16;
 const GRADING = 32;
 const CHROMA = 64;
+const LUT3D = 128;
 
 const PASS_FIELDS = [
   'flags',
@@ -42,25 +44,43 @@ const PASS_FIELDS = [
 ] as const;
 type PassField = (typeof PASS_FIELDS)[number];
 
-export const TEXTURE_UNIT = { image: 0, curves: 1, hsl: 2 } as const;
+export const TEXTURE_UNIT = { image: 0, curves: 1, hsl: 2, lut: 3 } as const;
+
+/** Проход конвейера для шейдера: подготовленные параметры, строки таблиц и, у образа, его LUT (шаг 9). */
+export interface PassInput {
+  baked: BakedAdjust;
+  tables: PassTables;
+  /** Домен LUT, чья текстура привязана к TEXTURE_UNIT.lut; null — шаг 9 пропускается. */
+  lut?: Pick<Lut3D, 'domainMin' | 'domainMax'> | null;
+}
 
 export class PipelineProgram {
   private readonly program: WebGLProgram;
   private readonly vao: WebGLVertexArrayObject;
   private readonly buffer: WebGLBuffer;
   private readonly passes: Record<PassField, WebGLUniformLocation | null>[];
-  private readonly uniforms: Record<'rect' | 'canvas' | 'uv' | 'passCount' | 'view', WebGLUniformLocation | null>;
+  private readonly uniforms: Record<'rect' | 'canvas' | 'uv' | 'passCount' | 'view' | 'lutMin' | 'lutMax', WebGLUniformLocation | null>;
 
   constructor(private readonly gl: WebGL2RenderingContext) {
     this.program = link(gl, compile(gl, gl.VERTEX_SHADER, VERTEX), compile(gl, gl.FRAGMENT_SHADER, withConstants(FRAGMENT)));
     const at = (name: string) => gl.getUniformLocation(this.program, name);
     this.passes = [0, 1].map((i) => Object.fromEntries(PASS_FIELDS.map((f) => [f, at(`uPass[${i}].${f}`)])) as Record<PassField, WebGLUniformLocation | null>);
-    this.uniforms = { rect: at('uRect'), canvas: at('uCanvas'), uv: at('uUv'), passCount: at('uPassCount'), view: at('uView') };
+    this.uniforms = {
+      rect: at('uRect'),
+      canvas: at('uCanvas'),
+      uv: at('uUv'),
+      passCount: at('uPassCount'),
+      view: at('uView'),
+      lutMin: at('uLutMin'),
+      lutMax: at('uLutMax'),
+    };
 
     gl.useProgram(this.program);
     gl.uniform1i(at('uImage'), TEXTURE_UNIT.image);
     gl.uniform1i(at('uCurves'), TEXTURE_UNIT.curves);
     gl.uniform1i(at('uHsl'), TEXTURE_UNIT.hsl);
+    // Свой блок: иначе sampler3D остался бы на блоке 0 вместе с sampler2D, и WebGL отверг бы отрисовку.
+    gl.uniform1i(at('uLut'), TEXTURE_UNIT.lut);
     gl.uniform1i(this.uniforms.view, VIEW_OUTPUT_CODES.color);
 
     // Один квадрат на все плитки: углы 0..1, полосой из двух треугольников.
@@ -80,11 +100,11 @@ export class PipelineProgram {
     this.gl.bindVertexArray(this.vao);
   }
 
-  /** Проходы конвейера: поправка фото и, если есть, образ. */
-  setPasses(passes: readonly { baked: BakedAdjust; tables: PassTables }[]): void {
+  /** Проходы конвейера: поправка фото и, если есть, образ. LUT — только у одного прохода (образа). */
+  setPasses(passes: readonly PassInput[]): void {
     const gl = this.gl;
     gl.uniform1i(this.uniforms.passCount, passes.length);
-    passes.forEach(({ baked, tables }, i) => {
+    passes.forEach(({ baked, tables, lut }, i) => {
       const u = this.passes[i];
       if (!u) return;
       const { linear, curves, color } = baked;
@@ -96,6 +116,11 @@ export class PipelineProgram {
         if (color.hsl) flags |= HSL;
         if (color.grading) flags |= GRADING;
         if (color.vibrance !== 0 || color.saturation !== 0) flags |= CHROMA;
+      }
+      if (lut) {
+        flags |= LUT3D;
+        gl.uniform3f(this.uniforms.lutMin, ...lut.domainMin);
+        gl.uniform3f(this.uniforms.lutMax, ...lut.domainMax);
       }
       gl.uniform1i(u.flags, flags);
       const exposure = linear?.exposure ?? 1;

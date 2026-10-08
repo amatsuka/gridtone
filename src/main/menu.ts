@@ -5,6 +5,7 @@ import type { Actions } from './actions';
 
 const PROJECT_ITEM_IDS = [
   'import',
+  'importLut',
   'export',
   'save',
   'close',
@@ -36,6 +37,8 @@ export function buildMenu(actions: Actions, sendCommand: (command: MenuCommand) 
         { label: 'Открыть проект…', accelerator: 'CmdOrCtrl+O', click: () => void actions.openProject() },
         { type: 'separator' },
         { id: 'import', label: 'Импортировать фото…', accelerator: 'CmdOrCtrl+I', click: () => void actions.importPhotos() },
+        // Импорт LUT ведёт renderer: он показывает ошибку разбора и открывает новый образ.
+        { id: 'importLut', label: 'Импортировать LUT…', click: () => sendCommand('importLut') },
         // Диалог экспорта живёт в renderer: меню только открывает его.
         command('export', 'Экспорт…', 'CmdOrCtrl+Shift+E'),
         { type: 'separator' },

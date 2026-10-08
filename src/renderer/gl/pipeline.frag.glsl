@@ -5,6 +5,7 @@
 precision highp float;
 precision highp int;
 precision highp sampler2D;
+precision highp sampler3D;
 
 //#constants
 
@@ -16,6 +17,7 @@ const int COLOR = 8;
 const int HSL = 16;
 const int GRADING = 32;
 const int CHROMA = 64;
+const int LUT3D = 128;  // шаг 9: импортированный LUT образа (docs/decisions/0015-lut-import.md)
 
 struct Pass {
   int flags;
@@ -35,6 +37,9 @@ struct Pass {
 uniform sampler2D uImage;
 uniform sampler2D uCurves; // RGBA32F, строка — таблица кривых одного прохода
 uniform sampler2D uHsl;    // RGBA32F, строка — таблица HSL одного прохода
+uniform sampler3D uLut;    // RGB32F, size³ узлов: R по x, G по y, B по z; без фильтрации
+uniform vec3 uLutMin;      // DOMAIN_MIN и DOMAIN_MAX LUT
+uniform vec3 uLutMax;
 uniform Pass uPass[2];     // поправка фото, затем образ
 uniform int uPassCount;
 uniform int uView;         // пост-обработка режима просмотра: VIEW_COLOR, VIEW_LUMINANCE, VIEW_POSTERIZE
@@ -176,6 +181,42 @@ vec3 applyChroma(vec3 lch, float vibrance, float saturation) {
   return vec3(lch.x, lch.y * vib * (1.0 + saturation), lch.z);
 }
 
+// ─── Шаг 9: LUT образа (src/core/lut/lut3d.ts, tetrahedral) ─────────────────
+
+vec3 lutNode(ivec3 p) {
+  return texelFetch(uLut, p, 0).rgb;
+}
+
+// Ячейка делится диагональю 000–111 на шесть тетраэдров; тетраэдр выбирается порядком дробных частей,
+// веса — их разности. Те же ветви и те же веса, что в core.
+vec3 applyLut(vec3 c) {
+  int n = textureSize(uLut, 0).x - 1;
+  vec3 pos = clamp((c - uLutMin) / (uLutMax - uLutMin), 0.0, 1.0) * float(n);
+  // Последняя ячейка — [n − 1, n]: вход на верхней границе даёт её дальний узел с весом 1.
+  ivec3 i = min(ivec3(floor(pos)), ivec3(n - 1));
+  vec3 f = pos - vec3(i);
+  ivec3 v1;
+  ivec3 v2;
+  vec4 w;
+  if (f.r >= f.g) {
+    if (f.g >= f.b) {
+      v1 = ivec3(1, 0, 0); v2 = ivec3(1, 1, 0); w = vec4(1.0 - f.r, f.r - f.g, f.g - f.b, f.b);
+    } else if (f.r >= f.b) {
+      v1 = ivec3(1, 0, 0); v2 = ivec3(1, 0, 1); w = vec4(1.0 - f.r, f.r - f.b, f.b - f.g, f.g);
+    } else {
+      v1 = ivec3(0, 0, 1); v2 = ivec3(1, 0, 1); w = vec4(1.0 - f.b, f.b - f.r, f.r - f.g, f.g);
+    }
+  } else if (f.b >= f.g) {
+    v1 = ivec3(0, 0, 1); v2 = ivec3(0, 1, 1); w = vec4(1.0 - f.b, f.b - f.g, f.g - f.r, f.r);
+  } else if (f.b >= f.r) {
+    v1 = ivec3(0, 1, 0); v2 = ivec3(0, 1, 1); w = vec4(1.0 - f.g, f.g - f.b, f.b - f.r, f.r);
+  } else {
+    v1 = ivec3(0, 1, 0); v2 = ivec3(1, 1, 0); w = vec4(1.0 - f.g, f.g - f.r, f.r - f.b, f.b);
+  }
+  vec3 out3 = w.x * lutNode(i) + w.y * lutNode(i + v1) + w.z * lutNode(i + v2) + w.w * lutNode(i + ivec3(1));
+  return clamp(out3, 0.0, 1.0);
+}
+
 // ─── Проход ─────────────────────────────────────────────────────────────────
 
 vec3 applyPass(vec3 c0, Pass p) {
@@ -195,6 +236,7 @@ vec3 applyPass(vec3 c0, Pass p) {
     if ((p.flags & CHROMA) != 0) lab = lchToLab(applyChroma(toLch(lab), p.vibrance, p.saturation));
     c = encodeSrgbClamped(oklabToLinear(lab));
   }
+  if ((p.flags & LUT3D) != 0) c = applyLut(c);
   return c;
 }
 

@@ -22,7 +22,7 @@ const service = new ProjectService(indexer, {
   status: (status) => send(mainWindow, 'project:status', status),
   importProgress: (progress) => send(mainWindow, 'import:progress', progress),
 });
-const exporter = new ExportService(indexer, (progress) => send(mainWindow, 'export:progress', progress));
+const exporter = new ExportService(indexer, (progress) => send(mainWindow, 'export:progress', progress), { luts: service });
 const actions = createActions(service, exporter, () => mainWindow);
 
 function createWindow(): BrowserWindow {
@@ -67,6 +67,8 @@ function registerIpc(): void {
     actions.importPhotos(Array.isArray(paths) && paths.every((p) => typeof p === 'string') ? paths : undefined),
   );
   handle('export:run', (request) => actions.exportProject(request));
+  handle('lut:import', () => actions.importLut());
+  handle('lut:data', (id) => service.lutData(id));
 }
 
 void app.whenReady().then(() => {

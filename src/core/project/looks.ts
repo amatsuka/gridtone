@@ -19,12 +19,13 @@ export function nextLookName(looks: readonly Look[]): string {
   }
 }
 
-/** Копия встаёт сразу после оригинала. LUT не копируется: его задаёт только main (ADR 0010). */
+/** Копия встаёт сразу после оригинала, со ссылкой на тот же LUT из реестра (ADR 0015). */
 export function duplicateLook(project: Project, lookId: string, newId: string): Look | undefined {
   const index = project.looks.findIndex((look) => look.id === lookId);
   const source = project.looks[index];
   if (!source) return undefined;
   const copy = createLook(newId, copyName(project.looks, source.name), source.adjust);
+  if (source.importedLut !== undefined) copy.importedLut = source.importedLut;
   project.looks.splice(index + 1, 0, copy);
   return copy;
 }

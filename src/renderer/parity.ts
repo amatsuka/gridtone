@@ -1,14 +1,29 @@
 // Скрытая страница для tests/e2e/shader-parity.spec.ts: рисует изображение тем же шейдером и той же
 // программой, что и сетка, во float-буфер и отдаёт пиксели. Приложение эту страницу не открывает.
-import { bakePipeline, CURVE_TABLE_SIZE, type PipelineParams } from '@core/color/bake';
+import { bakePipeline, CURVE_TABLE_SIZE, type BakedAdjust, type PipelineParams } from '@core/color/bake';
 import { HSL_TABLE_SIZE } from '@core/color/hsl';
 import type { ViewOutput } from '@core/color/view';
-import { PipelineProgram, TEXTURE_UNIT } from './gl/program';
+import type { Lut3D } from '@core/lut/lut3d';
+import { LutTextures } from './gl/luts';
+import { PipelineProgram, TEXTURE_UNIT, type PassInput } from './gl/program';
 import { TableAtlas } from './gl/tables';
 
+/** LUT для страницы: узлы float64 подряд в base64 — так 65³ не идёт через JSON числами. */
+export interface ParityLut {
+  size: number;
+  domainMin: [number, number, number];
+  domainMax: [number, number, number];
+  data: string;
+}
+
 export interface ParityApi {
-  /** RGBA 8 бит (base64) → RGBA float32 (base64), строки сверху вниз, как во входе. view — режим 3 или 4. */
-  render(width: number, height: number, rgba8: string, params: PipelineParams, view?: ViewOutput): string;
+  /** Запоминает LUT под id: его текстура загружается один раз на все отрисовки (шаг 9, этап 3б). */
+  loadLut(id: string, lut: ParityLut): void;
+  /**
+   * RGBA 8 бит (base64) → RGBA float32 (base64), строки сверху вниз, как во входе. view — режим 3 или 4.
+   * lutId — LUT образа из loadLut: шаг 9 последнего прохода; params.lut не используется.
+   */
+  render(width: number, height: number, rgba8: string, params: PipelineParams, view?: ViewOutput, lutId?: string): string;
 }
 
 declare global {
@@ -24,9 +39,17 @@ if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('Нет EXT_colo
 const program = new PipelineProgram(gl);
 const curves = new TableAtlas(gl, CURVE_TABLE_SIZE);
 const hsl = new TableAtlas(gl, HSL_TABLE_SIZE);
+const lutTextures = new LutTextures(gl);
+const NEUTRAL_PASS: BakedAdjust = { linear: null, curves: null, color: null };
+const luts = new Map<string, Lut3D>();
 
 window.gridtoneParity = {
-  render(width, height, rgba8, params, view = 'color') {
+  loadLut(id, { size, domainMin, domainMax, data }) {
+    const bytes = fromBase64(data);
+    luts.set(id, { size, domainMin, domainMax, data: new Float64Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 8) });
+  },
+
+  render(width, height, rgba8, params, view = 'color', lutId) {
     const source = texture(gl.RGBA8, width, height, gl.RGBA, gl.UNSIGNED_BYTE, fromBase64(rgba8));
     const target = texture(gl.RGBA32F, width, height, gl.RGBA, gl.FLOAT, null);
     const framebuffer = gl.createFramebuffer();
@@ -34,14 +57,21 @@ window.gridtoneParity = {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('Float-буфер не собрался');
 
-    const baked = bakePipeline(params);
-    const passes = (baked.look ? [baked.photo, baked.look] : [baked.photo]).map((pass) => ({
+    const lut = lutId === undefined ? undefined : luts.get(lutId);
+    if (lutId !== undefined && !lut) throw new Error(`LUT ${lutId} не загружен`);
+    const baked = bakePipeline({ photo: params.photo, look: params.look });
+    // Как в приложении: у образа с LUT второй проход есть всегда, даже с нейтральной коррекцией.
+    const look = baked.look ?? (lut ? NEUTRAL_PASS : null);
+    const order = look ? [baked.photo, look] : [baked.photo];
+    const passes = order.map((pass, i): PassInput => ({
       baked: pass,
       tables: {
         curvesRow: pass.curves ? curves.row(pass.curves) : 0,
         hslRow: pass.color?.hsl ? hsl.row(pass.color.hsl) : 0,
       },
+      lut: lut && i === order.length - 1 ? lut : null,
     }));
+    if (lut && lutId !== undefined) lutTextures.bind(lutId, lut, TEXTURE_UNIT.lut);
 
     gl.viewport(0, 0, width, height);
     program.use();

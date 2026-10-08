@@ -1,5 +1,6 @@
 // Метрики плиток для режимов 5 «Доминанты» и 7 «Отклонение» (docs/decisions/0012-view-modes.md).
-// Считает их воркер; здесь — кэш по ассету, кадру и параметрам конвейера и пересчёт через 150 мс после правки.
+// Считает их воркер; здесь — кэш по ассету, кадру, параметрам конвейера и id LUT образа (ADR 0015)
+// и пересчёт через 150 мс после правки.
 // Метрики — производные данные: в проект и в историю они не попадают.
 import { create } from 'zustand';
 import type { PipelineParams } from '@core/color/bake';
@@ -7,8 +8,9 @@ import type { TileMetrics } from '@core/metrics/tile';
 import { createAdjust } from '@core/project/defaults';
 import { proxyUrl } from '@shared/cache';
 import type { ViewMode } from '@shared/view';
+import { lookLut, useLutStore } from './luts';
 import { useAppStore } from './store';
-import type { MetricsRequest, MetricsResponse } from './workers/protocol';
+import type { MetricsRequest, MetricsResponse, WorkerLut } from './workers/protocol';
 
 const DEBOUNCE_MS = 150;
 /** Результатов в кэше: несколько сотен байт каждый. */
@@ -29,6 +31,8 @@ export function needsMetrics(mode: ViewMode): boolean {
 /** Подписывается на проект и режим просмотра. Воркер создаётся при первом входе в режим 5 или 7. */
 export function connectMetrics(): () => void {
   let worker: Worker | null = null;
+  /** LUT, уже присланные текущему воркеру. */
+  let sentLuts = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let frame = 0;
   const cache = new Map<string, TileMetrics>();
@@ -70,6 +74,7 @@ export function connectMetrics(): () => void {
     const created = new Worker(new URL('./workers/metrics.worker.ts', import.meta.url), { type: 'module' });
     created.addEventListener('message', onMessage);
     created.addEventListener('error', (event) => console.error('Воркер метрик упал', event.message));
+    sentLuts = new Set();
     return created;
   };
 
@@ -79,16 +84,21 @@ export function connectMetrics(): () => void {
     if (!snapshot || !needsMetrics(viewMode)) return;
     const { project, assets } = snapshot;
     const ratio = project.grid.ratio;
-    const looks = new Map(project.looks.map((look) => [look.id, look.adjust]));
+    const looks = new Map(project.looks.map((look) => [look.id, look]));
+    const lutTables = useLutStore.getState().byId;
     wanted = new Map();
     for (const slot of project.slots) {
       const { assetId } = slot;
       if (!assetId || assets[assetId]?.proxy !== 'ready') continue;
+      const look = slot.lookId ? looks.get(slot.lookId) : undefined;
+      // Шаг 9: пока таблица LUT едет из main, метрики плитки не считаются — как и холст её не рисует.
+      const lut = showOriginal ? null : lookLut(look, snapshot.luts, lutTables);
+      if (lut?.state === 'loading') continue;
+      const lutId = lut?.state === 'ready' ? lut.id : undefined;
       // До/после: метрики исходника, как и холст.
-      const params: PipelineParams = showOriginal
-        ? { photo: NEUTRAL }
-        : { photo: slot.adjust, look: slot.lookId ? looks.get(slot.lookId) : undefined };
-      const key = JSON.stringify([assetId, ratio, slot.crop, params]);
+      const params: PipelineParams = showOriginal ? { photo: NEUTRAL } : { photo: slot.adjust, look: look?.adjust };
+      // id LUT выводится из содержимого: он определяет таблицу, и ключ остаётся коротким.
+      const key = JSON.stringify([assetId, ratio, slot.crop, params, lutId ?? null]);
       wanted.set(slot.id, key);
       const cached = cache.get(key);
       if (cached) {
@@ -100,7 +110,21 @@ export function connectMetrics(): () => void {
       if (pending.has(key)) continue;
       pending.add(key);
       worker ??= createWorker();
-      const request: MetricsRequest = { key, assetId, url: proxyUrl(assetId, 512), crop: slot.crop, ratio, params };
+      if (lut?.state === 'ready' && !sentLuts.has(lut.id)) {
+        const message: WorkerLut = { type: 'lut', id: lut.id, lut: lut.lut };
+        worker.postMessage(message);
+        sentLuts.add(lut.id);
+      }
+      const request: MetricsRequest = {
+        type: 'tile',
+        key,
+        assetId,
+        url: proxyUrl(assetId, 512),
+        crop: slot.crop,
+        ratio,
+        params,
+        ...(lutId === undefined ? {} : { lutId }),
+      };
       worker.postMessage(request);
     }
     publish();
@@ -117,10 +141,17 @@ export function connectMetrics(): () => void {
       timer = setTimeout(run, DEBOUNCE_MS);
     }
   });
+  // Таблица LUT пришла из main: плитки с этим образом теперь можно посчитать.
+  const unsubscribeLuts = useLutStore.subscribe(() => {
+    if (!needsMetrics(useAppStore.getState().viewMode)) return;
+    clearTimeout(timer);
+    run();
+  });
   run();
 
   return () => {
     unsubscribe();
+    unsubscribeLuts();
     clearTimeout(timer);
     cancelAnimationFrame(frame);
     worker?.terminate();

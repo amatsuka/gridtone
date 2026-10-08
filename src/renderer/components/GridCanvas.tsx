@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import type { ViewOutput } from '@core/color/view';
 import type { ViewMode } from '@shared/view';
 import { GridRenderer } from '../gl/GridRenderer';
+import { useLutStore } from '../luts';
 import { useAppStore } from '../store';
 
 /** Что шейдер делает после проходов в каждом режиме: только 3 и 4 меняют цвет на холсте. Так же и в редакторе фото. */
@@ -37,10 +38,21 @@ export function GridCanvas({
     const sync = () => {
       const { snapshot, viewMode, showOriginal } = useAppStore.getState();
       renderer.setScene(
-        snapshot ? { project: snapshot.project, assets: snapshot.assets, view: viewOutput(viewMode), original: showOriginal } : null,
+        snapshot
+          ? {
+              project: snapshot.project,
+              assets: snapshot.assets,
+              lutFiles: snapshot.luts,
+              luts: useLutStore.getState().byId,
+              view: viewOutput(viewMode),
+              original: showOriginal,
+            }
+          : null,
       );
     };
     sync();
+    // Таблица LUT пришла из main — плитки с этим образом можно рисовать.
+    const unsubscribeLuts = useLutStore.subscribe(sync);
     const unsubscribe = useAppStore.subscribe((state, prev) => {
       if (state.snapshot !== prev.snapshot || state.viewMode !== prev.viewMode || state.showOriginal !== prev.showOriginal) sync();
       // Превью перетаскивания переставляет плитки в DOM, холст рисует их на новых местах.
@@ -57,6 +69,7 @@ export function GridCanvas({
 
     return () => {
       unsubscribe();
+      unsubscribeLuts();
       scroller?.removeEventListener('scroll', render);
       window.removeEventListener('resize', render);
       observer.disconnect();

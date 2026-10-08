@@ -55,13 +55,16 @@ describe('образы', () => {
     expect(project.slots.some((s) => 'lookId' in s && s.lookId === undefined)).toBe(false);
   });
 
-  test('копия встаёт после оригинала, с новым id и именем, без LUT', () => {
+  test('копия встаёт после оригинала, с новым id и именем, со ссылкой на тот же LUT', () => {
     const project = sample();
     project.looks[0]!.adjust.exposure = 1;
-    project.looks[0]!.importedLut = '/luts/film.cube';
+    project.looks[0]!.importedLut = '0123456789abcdef';
     const copy = duplicateLook(project, 'warm', 'warm-2');
     expect(project.looks.map((l) => l.id)).toEqual(['warm', 'warm-2', 'cold']);
-    expect(copy).toEqual({ id: 'warm-2', name: 'Тёплый копия', adjust: { ...createAdjust(), exposure: 1 } });
+    expect(copy).toEqual({ id: 'warm-2', name: 'Тёплый копия', adjust: { ...createAdjust(), exposure: 1 }, importedLut: '0123456789abcdef' });
+    expect(copy?.adjust).not.toBe(project.looks[0]!.adjust);
+    // Образ без LUT копируется без поля importedLut.
+    expect(duplicateLook(project, 'cold', 'cold-2')).not.toHaveProperty('importedLut');
 
     duplicateLook(project, 'warm', 'warm-3');
     expect(project.looks[1]?.name).toBe('Тёплый копия 2');

@@ -4,10 +4,12 @@
 import { bakeAdjust, CURVE_TABLE_SIZE, type BakedAdjust } from '@core/color/bake';
 import { HSL_TABLE_SIZE } from '@core/color/hsl';
 import type { ViewOutput } from '@core/color/view';
+import type { Lut3D } from '@core/lut/lut3d';
 import type { Affine } from '@core/project/crop';
 import type { Adjust } from '@core/project/types';
 import type { ProxySize } from '@shared/cache';
-import { PipelineProgram, TEXTURE_UNIT } from './program';
+import { LutTextures } from './luts';
+import { PipelineProgram, TEXTURE_UNIT, type PassInput } from './program';
 import { TableAtlas } from './tables';
 import { ProxyTextures, type ProxyTexture } from './textures';
 
@@ -23,8 +25,15 @@ function bake(adjust: Adjust): BakedAdjust {
   return result;
 }
 
+/** Загруженный LUT образа: id из реестра проекта и разобранная таблица (ADR 0015). */
+export interface LoadedLut {
+  id: string;
+  lut: Lut3D;
+}
+
 export class PipelineGpu {
   readonly textures: ProxyTextures;
+  readonly luts: LutTextures;
   private readonly program: PipelineProgram;
   private readonly curves: TableAtlas;
   private readonly hsl: TableAtlas;
@@ -38,6 +47,7 @@ export class PipelineGpu {
     this.curves = new TableAtlas(gl, CURVE_TABLE_SIZE);
     this.hsl = new TableAtlas(gl, HSL_TABLE_SIZE);
     this.textures = new ProxyTextures(gl, proxy.onLoad, proxy.maxTextures, proxy.size);
+    this.luts = new LutTextures(gl);
   }
 
   /** Начало кадра: программа и пост-обработка режима просмотра (3 и 4). */
@@ -49,6 +59,7 @@ export class PipelineGpu {
   /**
    * Рисует фото: rect — прямоугольник в пикселях холста, uv — точка прямоугольника → координаты фото.
    * adjusts — проходы конвейера: поправка фото и образ; пусто — исходник (до/после).
+   * lut — импортированный LUT образа: шаг 9 последнего прохода (ADR 0015).
    */
   draw(
     proxy: ProxyTexture,
@@ -56,8 +67,9 @@ export class PipelineGpu {
     rect: readonly [number, number, number, number],
     canvas: readonly [number, number],
     uv: Affine,
+    lut: LoadedLut | null = null,
   ): void {
-    const passes = adjusts.map((adjust) => {
+    const passes = adjusts.map((adjust, i): PassInput => {
       const pass = bake(adjust);
       return {
         baked: pass,
@@ -65,9 +77,11 @@ export class PipelineGpu {
           curvesRow: pass.curves ? this.curves.row(pass.curves) : 0,
           hslRow: pass.color?.hsl ? this.hsl.row(pass.color.hsl) : 0,
         },
+        lut: lut && i === adjusts.length - 1 ? lut.lut : null,
       };
     });
     const gl = this.gl;
+    if (lut && passes.length > 0) this.luts.bind(lut.id, lut.lut, TEXTURE_UNIT.lut);
     gl.activeTexture(gl.TEXTURE0 + TEXTURE_UNIT.image);
     gl.bindTexture(gl.TEXTURE_2D, proxy.texture);
     this.curves.bind(TEXTURE_UNIT.curves);
@@ -98,5 +112,6 @@ export class PipelineGpu {
     this.curves.dispose();
     this.hsl.dispose();
     this.textures.dispose();
+    this.luts.dispose();
   }
 }

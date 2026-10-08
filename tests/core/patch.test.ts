@@ -34,6 +34,16 @@ function projectWithLook(): Project {
   return project;
 }
 
+const LUT_ID = '0123456789abcdef';
+
+/** Как projectWithLook, но у образа — импортированный LUT из реестра. */
+function projectWithLut(): Project {
+  const project = projectWithLook();
+  project.luts[LUT_ID] = { id: LUT_ID, name: 'сепия.cube', size: 17, hash: LUT_ID.padEnd(64, '0'), importedAt: '2026-10-08T00:00:00.000Z' };
+  project.looks[0]!.importedLut = LUT_ID;
+  return project;
+}
+
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 /** Правка через Immer, как в renderer, и те же патчи в main: результат обязан совпасть. */
@@ -256,20 +266,44 @@ describe('инварианты: образы', () => {
     ['пустой id', createLook('', 'Образ')],
     ['лишнее поле', { ...createLook('l', 'Образ'), extra: 1 }],
     ['коррекция вне пределов', { ...createLook('l', 'Образ'), adjust: { ...createAdjust(), exposure: 5 } }],
-    ['LUT у нового образа', { ...createLook('l', 'Образ'), importedLut: '/x.cube' }],
+    ['LUT не из реестра', { ...createLook('l', 'Образ'), importedLut: 'ffffffffffffffff' }],
+    ['LUT не строкой', { ...createLook('l', 'Образ'), importedLut: 17 }],
   ])('некорректный образ: %s', (_, look) => {
     expectRejected(sampleProject(), [{ op: 'add', path: ['looks', 0], value: look }]);
   });
 
-  test('importedLut меняет только main, а остальное в таком образе править можно', () => {
-    const project = projectWithLook();
-    project.looks[0]!.importedLut = '/luts/film.cube';
+  test('LUT образа: снять и вернуть можно только LUT из реестра; сам реестр меняет только main (ADR 0015)', () => {
+    const project = projectWithLut();
+    // «Снять LUT» и отмена — обычные правки renderer.
+    const detached = roundTrip(project, (draft) => {
+      delete draft.looks[0]!.importedLut;
+    });
+    expect(detached.looks[0]).not.toHaveProperty('importedLut');
+    const back = roundTrip(detached, (draft) => {
+      draft.looks[0]!.importedLut = LUT_ID;
+    });
+    expect(back.looks[0]?.importedLut).toBe(LUT_ID);
+    // Неизвестный id и не строка отвергаются, остальное в образе с LUT править можно.
+    expectRejected(project, [{ op: 'replace', path: ['looks', 0, 'importedLut'], value: 'ffffffffffffffff' }]);
     expectRejected(project, [{ op: 'replace', path: ['looks', 0, 'importedLut'], value: '/luts/other.cube' }]);
-    expectRejected(project, [{ op: 'remove', path: ['looks', 0, 'importedLut'] }]);
+    expectRejected(project, [{ op: 'replace', path: ['luts'], value: {} }]);
+    expectRejected(project, [{ op: 'add', path: ['luts', 'ffffffffffffffff'], value: { id: 'ffffffffffffffff' } }]);
     applyProjectPatches(project, [
       { op: 'replace', path: ['looks', 0, 'name'], value: 'Плёнка' },
       { op: 'replace', path: ['looks', 0, 'adjust', 'exposure'], value: 0.5 },
     ]);
-    expect(project.looks[0]).toMatchObject({ name: 'Плёнка', importedLut: '/luts/film.cube', adjust: { exposure: 0.5 } });
+    expect(project.looks[0]).toMatchObject({ name: 'Плёнка', importedLut: LUT_ID, adjust: { exposure: 0.5 } });
+  });
+
+  test('удаление образа с LUT отменяется обратными патчами, вместе с LUT и плитками', () => {
+    const project = projectWithLut();
+    const [removed, patches, inverse] = produceWithPatches(project, (draft) => removeLook(draft, 'look-1'));
+    const target = clone(project);
+    applyProjectPatches(target, patches as ProjectPatch[]);
+    expect(target).toEqual(removed);
+    applyProjectPatches(target, inverse as ProjectPatch[]);
+    expect(target).toEqual(project);
+    expect(target.looks[0]?.importedLut).toBe(LUT_ID);
+    expect(target.slots[0]?.lookId).toBe('look-1');
   });
 });

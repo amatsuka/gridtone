@@ -41,7 +41,7 @@ Gridtone — десктоп-приложение, в котором Instagram-с
 
 ## Модель данных
 
-Каждая правка хранится как данные в `project.json`: превью, анализ и экспорт каждый раз вычисляются из него. Проект — это папка с `project.json` и `cache/` (прокси, миниатюры). Оригиналы фото адресуются абсолютным путём и хэшем, поэтому переезд папки с фото не ломает проект.
+Каждая правка хранится как данные в `project.json`: превью, анализ и экспорт каждый раз вычисляются из него. Проект — это папка с `project.json`, `cache/` (прокси, миниатюры) и `luts/` (копии импортированных `.cube`). Оригиналы фото адресуются абсолютным путём и хэшем, поэтому переезд папки с фото не ломает проект.
 
 ```ts
 type Ratio = '3:4' | '1:1';
@@ -55,6 +55,7 @@ interface Project {
   assets: Record<string, AssetRef>; // оригиналы фото проекта, ключ — AssetRef.id
   slots: Slot[];                 // порядок = порядок в сетке, 0 — верхний левый
   looks: Look[];                 // общие образы, каждый экспортируется в LUT
+  luts: Record<string, LutRef>;  // импортированные LUT, ключ — LutRef.id; меняет только main
   pattern?: Pattern;             // активная цель
   reference?: ReferenceGrid;     // разобранная чужая сетка
 }
@@ -66,6 +67,14 @@ interface AssetRef {            // оригинал; сам файл никог�
   w: number; h: number;          // с учётом EXIF-ориентации
   format: 'jpeg' | 'png' | 'webp' | 'tiff';
   icc: 'embedded' | 'assumed-srgb';
+  importedAt: string;            // ISO 8601
+}
+
+interface LutRef {               // копия файла — luts/<id>.cube в папке проекта
+  id: string;                    // первые 16 hex-символов hash
+  name: string;                  // имя исходного файла
+  size: number;                  // LUT_3D_SIZE, 2…65
+  hash: string;                  // SHA-256 файла
   importedAt: string;            // ISO 8601
 }
 
@@ -99,7 +108,7 @@ interface Adjust {
 type HueBand = 'red' | 'orange' | 'yellow' | 'green' | 'aqua' | 'blue' | 'purple' | 'magenta';
 interface Wheel { hue: number; amount: number }
 
-interface Look { id: string; name: string; adjust: Adjust; importedLut?: string }
+interface Look { id: string; name: string; adjust: Adjust; importedLut?: string } // importedLut — id из Project.luts
 
 interface SlotTarget {
   L: number;                     // OKLab L

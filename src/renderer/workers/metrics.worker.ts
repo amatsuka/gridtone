@@ -2,11 +2,14 @@
 // core → OKLab → палитра и средние. Сам расчёт — tileMetrics из core; здесь только декодирование и очередь.
 import type { RgbaImage } from '@core/image/sample';
 import { tileMetrics } from '@core/metrics/tile';
-import type { MetricsRequest, MetricsResponse } from './protocol';
+import type { Lut3D } from '@core/lut/lut3d';
+import type { MetricsMessage, MetricsRequest, MetricsResponse } from './protocol';
 
 /** Декодированных прокси в памяти: по 512 × 683 × 4 ≈ 1.4 МБ. */
 const MAX_IMAGES = 24;
 const images = new Map<string, Promise<RgbaImage>>();
+/** LUT образов по id: присылаются один раз, id выводится из содержимого. */
+const luts = new Map<string, Lut3D>();
 
 async function decode(url: string): Promise<RgbaImage> {
   const response = await fetch(url);
@@ -38,7 +41,10 @@ function proxy(assetId: string, url: string): Promise<RgbaImage> {
 async function handle(request: MetricsRequest): Promise<MetricsResponse> {
   try {
     const image = await proxy(request.assetId, request.url);
-    return { key: request.key, ok: true, metrics: tileMetrics(image, request.crop, request.ratio, request.params) };
+    const lut = request.lutId === undefined ? undefined : luts.get(request.lutId);
+    if (request.lutId !== undefined && !lut) throw new Error(`LUT ${request.lutId} не прислан`);
+    const params = lut ? { ...request.params, lut } : request.params;
+    return { key: request.key, ok: true, metrics: tileMetrics(image, request.crop, request.ratio, params) };
   } catch (err) {
     return { key: request.key, ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -46,7 +52,11 @@ async function handle(request: MetricsRequest): Promise<MetricsResponse> {
 
 // По одной плитке за раз: ответы идут по мере готовности, и воркер не держит в памяти все окна сразу.
 let queue = Promise.resolve();
-self.addEventListener('message', (event: MessageEvent<MetricsRequest>) => {
-  const request = event.data;
-  queue = queue.then(async () => self.postMessage(await handle(request)));
+self.addEventListener('message', (event: MessageEvent<MetricsMessage>) => {
+  const message = event.data;
+  if (message.type === 'lut') {
+    luts.set(message.id, message.lut);
+    return;
+  }
+  queue = queue.then(async () => self.postMessage(await handle(message)));
 });

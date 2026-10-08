@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { createAdjust } from '@core/project/defaults';
 import { lookUsage } from '@core/project/looks';
+import { lutRefOf } from '@core/project/luts';
 import type { Look, Project, Slot } from '@core/project/types';
 import { LOOK_NAME_MAX } from '@core/project/validate';
 import {
   assignLookToSelection,
+  detachLut,
+  dismissLutImportError,
   duplicateLookById,
   editLookAdjust,
   editSlotAdjust,
+  importLut,
   newLook,
   openGroupsDialog,
   removeLookById,
@@ -15,6 +19,7 @@ import {
   setActiveLook,
   setInspectorTab,
 } from '../commands';
+import { useLookLut } from '../luts';
 import { useAppStore, type InspectorTab } from '../store';
 import { AdjustPanel } from './AdjustPanel';
 
@@ -83,6 +88,7 @@ function PhotoTab({ slot, selectedCount }: { slot: Slot | undefined; selectedCou
 
 function LookTab({ project, primary, selectedIds }: { project: Project; primary: Slot | undefined; selectedIds: readonly string[] }) {
   const activeLookId = useAppStore((state) => state.activeLookId);
+  const importError = useAppStore((state) => state.lutImportError);
   const { looks } = project;
   const look = looks.find((l) => l.id === activeLookId) ?? looks[0];
 
@@ -105,7 +111,18 @@ function LookTab({ project, primary, selectedIds }: { project: Project; primary:
         <button disabled={!primary?.assetId} onClick={() => newLook(true)} title="Образ с копией поправки основной плитки">
           Из поправки фото
         </button>
+        <button onClick={() => void importLut()} title="Файл .cube станет новым образом: шаг 9 поверх коррекции образа">
+          Импорт LUT…
+        </button>
       </div>
+      {importError && (
+        <div className="inspector-note lut-import-error" role="alert" data-testid="lut-import-error">
+          <span>LUT не импортирован. {importError}</span>
+          <button className="link" onClick={dismissLutImportError}>
+            Скрыть
+          </button>
+        </div>
+      )}
       {look ? (
         <LookEditor look={look} project={project} selectedIds={selectedIds} />
       ) : (
@@ -141,6 +158,7 @@ function LookEditor({ look, project, selectedIds }: { look: Look; project: Proje
         <button onClick={() => duplicateLookById(look.id)}>Дублировать</button>
         <button onClick={() => removeLookById(look.id)}>Удалить</button>
       </div>
+      <LookLutRow look={look} project={project} />
       <header className="inspector-header inspector-subheader">
         <h3>Коррекция образа</h3>
         <button className="link" onClick={() => editLookAdjust(look.id, (a) => Object.assign(a, createAdjust()))}>
@@ -154,6 +172,33 @@ function LookEditor({ look, project, selectedIds }: { look: Look; project: Proje
         onEdit={(change, gesture) => editLookAdjust(look.id, change, gesture)}
       />
     </>
+  );
+}
+
+/** Импортированный LUT образа: имя файла и размер, «Снять LUT», предупреждение, если копия пропала (ADR 0015). */
+function LookLutRow({ look, project }: { look: Look; project: Project }) {
+  const ref = lutRefOf(project, look);
+  const lut = useLookLut(look);
+  if (!ref) return null;
+  return (
+    <div className="look-lut" data-testid="look-lut" data-state={lut.state}>
+      <div className="look-lut-line">
+        <span className="muted">LUT</span>
+        <span className="look-lut-name" title={ref.name}>
+          {ref.name}
+        </span>
+        <span className="muted">{ref.size}³</span>
+        <button className="link" onClick={() => detachLut(look.id)}>
+          Снять LUT
+        </button>
+      </div>
+      <p className="muted">Применяется последним, поверх коррекции образа.</p>
+      {lut.state === 'missing' && (
+        <p className="export-error" role="alert">
+          {lut.error} Пока его нет, LUT не применяется.
+        </p>
+      )}
+    </div>
   );
 }
 

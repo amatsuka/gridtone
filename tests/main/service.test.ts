@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -14,7 +15,9 @@ import type {
   ProjectSnapshot,
   ProjectStatus,
 } from '@shared/ipc';
-import { proxyFile } from '../../src/main/project/paths';
+import { writeCube } from '@core/lut/cube';
+import { lutFile, proxyFile } from '../../src/main/project/paths';
+import { sepiaLut } from '../golden/luts';
 import { ProjectService, type IndexerPort } from '../../src/main/project/service';
 
 class FakeIndexer implements IndexerPort {
@@ -283,5 +286,116 @@ describe('правки из renderer', () => {
     ).toThrow(PatchError);
     expect(service.snapshot()).toMatchObject({ patchSeq: 0, save: { state: 'saved' } });
     expect(service.snapshot()?.project.assets['aaaaaaaaaaaaaaaa']?.path).toBe('/ph/a.jpg');
+  });
+});
+
+describe('импорт LUT (ADR 0015)', () => {
+  const SEPIA = writeCube(sepiaLut());
+  const SEPIA_HASH = createHash('sha256').update(SEPIA).digest('hex');
+  const SEPIA_ID = SEPIA_HASH.slice(0, 16);
+
+  async function sourceFile(name: string, text: string): Promise<string> {
+    const dir = join(root, 'src');
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, name);
+    await writeFile(path, text);
+    return path;
+  }
+
+  test('копия в luts/, запись реестра и новый образ в конце; повторный импорт реестр не дублирует', async () => {
+    const dir = join(root, 'p');
+    await service.create(dir);
+    const path = await sourceFile('сепия.cube', SEPIA);
+
+    const first = await service.importLut(path);
+    expect(first.ok).toBe(true);
+    expect(await readFile(lutFile(dir, SEPIA_ID), 'utf8')).toBe(SEPIA);
+    const snapshot = service.snapshot();
+    expect(snapshot?.luts).toEqual({ [SEPIA_ID]: 'ok' });
+    expect(snapshot?.project.luts[SEPIA_ID]).toMatchObject({ id: SEPIA_ID, name: 'сепия.cube', size: 17, hash: SEPIA_HASH });
+    expect(snapshot?.project.looks).toEqual([
+      { id: first.ok ? first.lookId : '', name: 'Сепия', adjust: createAdjust(), importedLut: SEPIA_ID },
+    ]);
+
+    const second = await service.importLut(path);
+    expect(second.ok).toBe(true);
+    expect(Object.keys(service.snapshot()?.project.luts ?? {})).toEqual([SEPIA_ID]);
+    expect(service.snapshot()?.project.looks.map((look) => look.importedLut)).toEqual([SEPIA_ID, SEPIA_ID]);
+    expect(await readdir(join(dir, 'luts'))).toEqual([`${SEPIA_ID}.cube`]);
+
+    // Разобранный LUT — тот же, что в исходном файле.
+    expect((await service.loadLut(SEPIA_ID)).data).toEqual(sepiaLut().data.map((v) => Number(v.toFixed(6))));
+
+    // До диска: реестр и образы переживают закрытие и открытие.
+    await service.close();
+    const reopened = await service.open(dir);
+    expect(reopened.luts).toEqual({ [SEPIA_ID]: 'ok' });
+    expect(reopened.project.looks).toHaveLength(2);
+    expect(parseProject(await readFile(join(dir, 'project.json'), 'utf8')).luts[SEPIA_ID]?.name).toBe('сепия.cube');
+  });
+
+  test('битые файлы — ошибка с причиной, проект не меняется', async () => {
+    const dir = join(root, 'p');
+    await service.create(dir);
+    const broken = [
+      ['1d.cube', 'LUT_1D_SIZE 2\n0 0 0\n1 1 1\n', /1D LUT/],
+      ['rows.cube', 'LUT_3D_SIZE 2\n0 0 0\n1 1 1\n', /нужно 2³ = 8 строк/],
+      ['text.cube', 'это не LUT\n', /три числа|LUT_3D_SIZE/],
+    ] as const;
+    for (const [name, text, error] of broken) {
+      const result = await service.importLut(await sourceFile(name, text));
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatch(error);
+        expect(result.error.startsWith(name)).toBe(true);
+      }
+    }
+    expect((await service.importLut(join(root, 'нет.cube'))).ok).toBe(false);
+    expect(service.snapshot()?.project.looks).toEqual([]);
+    expect(service.snapshot()?.project.luts).toEqual({});
+    expect(await readdir(dir)).not.toContain('luts');
+  });
+
+  test('пропавшая копия: статус missing и ошибка чтения; повторный импорт восстанавливает', async () => {
+    const dir = join(root, 'p');
+    await service.create(dir);
+    const path = await sourceFile('сепия.cube', SEPIA);
+    await service.importLut(path);
+    await service.close();
+    await rm(lutFile(dir, SEPIA_ID));
+
+    expect((await service.open(dir)).luts).toEqual({ [SEPIA_ID]: 'missing' });
+    await expect(service.loadLut(SEPIA_ID)).rejects.toThrow(/сепия\.cube.*luts\//);
+    expect(await service.lutData(SEPIA_ID)).toMatchObject({ ok: false });
+    expect(await service.lutData('../../etc/passwd')).toMatchObject({ ok: false });
+
+    await service.importLut(path);
+    expect(service.snapshot()?.luts).toEqual({ [SEPIA_ID]: 'ok' });
+    expect((await service.loadLut(SEPIA_ID)).size).toBe(17);
+  });
+
+  test('изменённая копия не читается: хэш сверяется', async () => {
+    const dir = join(root, 'p');
+    await service.create(dir);
+    await service.importLut(await sourceFile('сепия.cube', SEPIA));
+    await service.close();
+    await writeFile(lutFile(dir, SEPIA_ID), SEPIA.replace('0.', '1.'));
+    await service.open(dir);
+    await expect(service.loadLut(SEPIA_ID)).rejects.toThrow(/изменилась/);
+    expect(service.snapshot()?.luts[SEPIA_ID]).toBe('missing');
+  });
+
+  test('папка проекта переносится вместе с LUT', async () => {
+    const dir = join(root, 'p');
+    await service.create(dir);
+    const path = await sourceFile('сепия.cube', SEPIA);
+    await service.importLut(path);
+    await service.close();
+    await rm(path);
+    const moved = join(root, 'moved');
+    await cp(dir, moved, { recursive: true });
+    await rm(dir, { recursive: true });
+    expect((await service.open(moved)).luts).toEqual({ [SEPIA_ID]: 'ok' });
+    expect((await service.loadLut(SEPIA_ID)).title).toBe('Сепия');
   });
 });

@@ -1,5 +1,5 @@
 import type { Project } from '@core/project/types';
-import type { AssetStatus, ProjectSnapshot, ProjectStatus, SaveState, SaveStatus } from '@shared/ipc';
+import type { AssetStatus, LutFileStatus, ProjectSnapshot, ProjectStatus, SaveState, SaveStatus } from '@shared/ipc';
 
 /** project — renderer нужен полный снимок; status — изменилось только состояние сохранения. */
 export type ChangeKind = 'project' | 'status';
@@ -28,6 +28,7 @@ export class ProjectSession {
     readonly dir: string,
     readonly project: Project,
     readonly assets: Record<string, AssetStatus>,
+    readonly luts: Record<string, LutFileStatus>,
     private readonly options: SessionOptions,
   ) {}
 
@@ -37,10 +38,10 @@ export class ProjectSession {
    * только статус, а номер пакета попадёт в следующий снимок (docs/decisions/0008-edit-flow.md).
    */
   update(
-    change: (project: Project, assets: Record<string, AssetStatus>) => void,
+    change: (project: Project, assets: Record<string, AssetStatus>, luts: Record<string, LutFileStatus>) => void,
     fromRenderer?: { patchSeq: number },
   ): void {
-    change(this.project, this.assets);
+    change(this.project, this.assets, this.luts);
     if (fromRenderer) this.patchSeq = fromRenderer.patchSeq;
     this.dirty = true;
     if (this.saveState !== 'error') this.saveState = 'pending';
@@ -53,6 +54,13 @@ export class ProjectSession {
     const current = this.assets[id];
     if (!current) return;
     this.assets[id] = { ...current, ...patch };
+    this.options.onChange('project');
+  }
+
+  /** Статус копии LUT: он, как и статус ассетов, не хранится в project.json. */
+  setLutStatus(id: string, status: LutFileStatus): void {
+    if (!(id in this.luts) || this.luts[id] === status) return;
+    this.luts[id] = status;
     this.options.onChange('project');
   }
 
@@ -82,7 +90,14 @@ export class ProjectSession {
   }
 
   snapshot(): ProjectSnapshot {
-    return { dir: this.dir, project: this.project, assets: this.assets, save: this.saveStatus(), patchSeq: this.patchSeq };
+    return {
+      dir: this.dir,
+      project: this.project,
+      assets: this.assets,
+      luts: this.luts,
+      save: this.saveStatus(),
+      patchSeq: this.patchSeq,
+    };
   }
 
   status(): ProjectStatus {

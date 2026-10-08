@@ -1,3 +1,4 @@
+import { isValidLutRef } from './luts';
 import type { Project } from './types';
 
 export class ProjectFormatError extends Error {
@@ -9,7 +10,7 @@ export function serializeProject(project: Project): string {
 }
 
 /**
- * Разбирает project.json и проверяет структуру верхнего уровня, ассеты, образы и слоты.
+ * Разбирает project.json и проверяет структуру верхнего уровня, ассеты, реестр LUT, образы и слоты.
  * Поля коррекции и целей пока не проверяются — их пишет только само приложение.
  */
 export function parseProject(text: string): Project {
@@ -54,6 +55,14 @@ export function parseProject(text: string): Project {
     }
   }
 
+  // Реестр LUT появился на этапе 3б (ADR 0015): в проекте до него реестр пустой.
+  if (data['luts'] === undefined) data['luts'] = {};
+  const luts = data['luts'];
+  if (!isRecord(luts)) fail('нет реестра LUT');
+  for (const [key, ref] of Object.entries(luts)) {
+    if (!isValidLutRef(ref, key)) fail(`некорректный LUT ${key}`);
+  }
+
   const looks = data['looks'];
   if (!Array.isArray(looks)) fail('нет списка образов');
   const lookIds = new Set<string>();
@@ -63,6 +72,10 @@ export function parseProject(text: string): Project {
     }
     if (lookIds.has(look['id'])) fail(`повторяется образ ${look['id']}`);
     lookIds.add(look['id']);
+    const lut = look['importedLut'];
+    if (lut !== undefined && (typeof lut !== 'string' || !Object.hasOwn(luts, lut))) {
+      fail(`образ ${look['id']} ссылается на неизвестный LUT`);
+    }
   }
 
   const slots = data['slots'];

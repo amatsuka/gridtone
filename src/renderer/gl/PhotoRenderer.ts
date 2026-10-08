@@ -3,7 +3,7 @@
 // Текстуры — текущее фото и соседние посты, не больше трёх; при закрытии редактора всё освобождается.
 import type { ViewOutput } from '@core/color/view';
 import type { Adjust } from '@core/project/types';
-import { PipelineGpu } from './gpu';
+import { PipelineGpu, type LoadedLut } from './gpu';
 
 /** Прокси 2048 в памяти: текущее фото и два соседа. */
 export const EDITOR_TEXTURES = 3;
@@ -17,6 +17,8 @@ export interface PhotoScene {
   preload: readonly string[];
   /** Проходы конвейера: поправка фото и образ. Пусто — исходник (до/после). */
   adjusts: readonly Adjust[];
+  /** LUT образа — шаг 9 последнего прохода (ADR 0015). */
+  lut: LoadedLut | null;
   /** Пост-обработка режимов 3 и 4 (ADR 0012) — как в сетке. */
   view: ViewOutput;
   /** Где на холсте фото: x, y, ширина, высота в CSS-пикселях. */
@@ -87,7 +89,7 @@ export class PhotoRenderer {
       if (proxy) {
         const [x, y, w, h] = scene.rect;
         gpu.begin(scene.view);
-        gpu.draw(proxy, scene.adjusts, [x * dpr, y * dpr, w * dpr, h * dpr], [width, height], IDENTITY);
+        gpu.draw(proxy, scene.adjusts, [x * dpr, y * dpr, w * dpr, h * dpr], [width, height], IDENTITY, scene.lut);
         drawn = `${proxy.width}x${proxy.height}`;
       }
     }

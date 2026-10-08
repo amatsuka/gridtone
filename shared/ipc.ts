@@ -1,5 +1,6 @@
 // Единый контракт IPC. Любой новый канал объявляется здесь и только здесь.
 import type { PipelineParams } from '@core/color/bake';
+import type { Lut3D } from '@core/lut/lut3d';
 import type { LutExportSize } from '@core/lut/verify';
 import type { ProjectPatch } from '@core/project/patch';
 import type { AssetRef, Project } from '@core/project/types';
@@ -14,6 +15,9 @@ export interface AssetStatus {
   original: 'ok' | 'missing' | 'changed';
 }
 
+/** Копия импортированного LUT в luts/ папки проекта: на месте или пропала (docs/decisions/0015-lut-import.md). */
+export type LutFileStatus = 'ok' | 'missing';
+
 export interface SaveStatus {
   state: SaveState;
   error?: string;
@@ -24,6 +28,8 @@ export interface ProjectSnapshot {
   dir: string;
   project: Project;
   assets: Record<string, AssetStatus>;
+  /** Статус копий LUT по id реестра project.luts. Если копия пропала, шаг 9 пропускается. */
+  luts: Record<string, LutFileStatus>;
   save: SaveStatus;
   /** Номер последнего пакета патчей из renderer, который уже вошёл в project. */
   patchSeq: number;
@@ -53,7 +59,21 @@ export interface PatchBatch {
  * меню срабатывает, только если страница сочетание не обработала, или по клику мышью.
  * `view:<режим>` — пункты меню «Вид» (docs/decisions/0012-view-modes.md): клавиши 1–7 у них только подписи.
  */
-export type MenuCommand = 'undo' | 'redo' | 'selectAll' | 'copyAdjust' | 'pasteAdjust' | 'export' | `view:${ViewMode}`;
+export type MenuCommand =
+  | 'undo'
+  | 'redo'
+  | 'selectAll'
+  | 'copyAdjust'
+  | 'pasteAdjust'
+  | 'export'
+  | 'importLut'
+  | `view:${ViewMode}`;
+
+/** Импорт `.cube` (ADR 0015): новый образ в конце looks или ошибка разбора — тогда проект не меняется. */
+export type LutImportResult = { ok: true; lookId: string } | { ok: false; error: string };
+
+/** Разобранный LUT из luts/<id>.cube. Если копии нет или она изменилась — ошибка, шаг 9 пропускается. */
+export type LutDataResult = { ok: true; lut: Lut3D } | { ok: false; error: string };
 
 export interface ImportProgress {
   jobId: string;
@@ -114,6 +134,10 @@ export interface InvokeMap {
   'assets:import': { args: [paths?: string[]]; result: { jobId: string } | null };
   /** Спросить папку и начать экспорт в новую подпапку; ход — событием export:progress. null — отменено. */
   'export:run': { args: [request: ExportRequest]; result: ExportStarted | null };
+  /** Спросить `.cube` и импортировать его новым образом. null — нет проекта или отменено. */
+  'lut:import': { args: []; result: LutImportResult | null };
+  /** Разобранный LUT по id из реестра открытого проекта. */
+  'lut:data': { args: [id: string]; result: LutDataResult };
 }
 
 export interface EventMap {
@@ -139,6 +163,8 @@ const invokeChannels = {
   'project:patch': true,
   'assets:import': true,
   'export:run': true,
+  'lut:import': true,
+  'lut:data': true,
 } satisfies Record<InvokeChannel, true>;
 
 const eventChannels = {

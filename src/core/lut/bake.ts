@@ -14,9 +14,10 @@ export function bakeLut(params: PipelineParams, size: number, title?: string): L
 }
 
 /**
- * Параметры LUT образа: его проход поверх нейтральной поправки фото. Поправка фото выравнивает
- * конкретный кадр и в LUT образа не входит: это делает редактор до LUT (spec, «Пределы»).
+ * Параметры LUT образа: его проход поверх нейтральной поправки фото, вместе с импортированным LUT
+ * образа (шаг 9). Поправка фото выравнивает конкретный кадр и в LUT образа не входит: это делает
+ * редактор до LUT (spec, «Пределы»).
  */
-export function lookPipeline(look: Adjust): PipelineParams {
-  return { photo: createAdjust(), look };
+export function lookPipeline(look: Adjust, lut?: Lut3D): PipelineParams {
+  return lut ? { photo: createAdjust(), look, lut } : { photo: createAdjust(), look };
 }

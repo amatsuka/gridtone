@@ -49,6 +49,8 @@ interface AppState {
   exportOpen: boolean;
   /** Последнее событие экспорта из main: диалог показывает его, если это его задача. */
   exportProgress: ExportProgress | null;
+  /** Почему не импортировался `.cube`: показывается во вкладке «Образ» (ADR 0015). */
+  lutImportError: string | null;
 }
 
 export const useAppStore = create<AppState>()(() => ({
@@ -68,6 +70,7 @@ export const useAppStore = create<AppState>()(() => ({
   editorTab: 'color',
   exportOpen: false,
   exportProgress: null,
+  lutImportError: null,
 }));
 
 // Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.
@@ -155,6 +158,7 @@ function receiveSnapshot(incoming: ProjectSnapshot | null): void {
     // Прогресс импорта относится к проекту: при смене проекта он больше не нужен.
     importProgress: sameProject ? current.importProgress : null,
     exportOpen: sameProject ? current.exportOpen : false,
+    lutImportError: sameProject ? current.lutImportError : null,
   });
 }
 
