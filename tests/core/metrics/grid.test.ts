@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fitHarmony } from '@core/harmony/templates';
 import { analyzeGrid, GRID_PALETTE_SIZE, gridPalette, neighborContrast } from '@core/metrics/grid';
 import { createSlot } from '@core/project/defaults';
 import type { Features, Project, Slot, Vec3 } from '@core/project/types';
@@ -165,5 +166,28 @@ describe('палитра сетки', () => {
     expect(point?.hue).toBeCloseTo(90, 9);
     expect(point?.chroma).toBeCloseTo(0.1, 12);
     expect(metrics?.wheel.find((p) => p.slotId === 's1')?.chroma).toBe(0);
+  });
+});
+
+describe('гармония в анализе сетки', () => {
+  const hue = (h: number, L = 0.65, C = 0.12): Vec3 => [L, C * Math.cos((h * Math.PI) / 180), C * Math.sin((h * Math.PI) / 180)];
+
+  it('по точкам колеса, опубликованные — контекст; у шаблона положение каждой точки', () => {
+    const { project, byId } = grid('PLL/LLL/L.L');
+    const hues = [40, 50, 60, 70, 80, 90, 200, 85];
+    project.slots.filter((slot) => byId[slot.id]).forEach((slot, i) => (byId[slot.id] = features(hue(hues[i] as number))));
+    const metrics = analyzeGrid(project, byId).metrics;
+    if (!metrics || metrics.harmony.kind !== 'template') throw new Error('ожидался шаблон');
+    expect(metrics.harmony).toEqual(fitHarmony(metrics.wheel));
+    expect(metrics.harmony.best.template).toBe('V');
+    expect(metrics.harmony.tiles).toHaveLength(8);
+    // Чужой тон — плитка s6, опубликованная s0 внутри шаблона.
+    const outside = metrics.wheel.filter((_, i) => metrics.harmony.kind === 'template' && metrics.harmony.tiles[i]?.outside);
+    expect(outside.map((p) => p.slotId)).toEqual(['s6']);
+  });
+
+  it('серая сетка — нейтральная', () => {
+    const { project, byId } = grid('LDL/DLD/LDL');
+    expect(analyzeGrid(project, byId).metrics?.harmony.kind).toBe('neutral');
   });
 });

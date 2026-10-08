@@ -1,6 +1,7 @@
-// Вкладка «Анализ» инспектора (spec, модуль 3; docs/decisions/0018-features-grid-metrics.md): карта яркости,
-// ритм, разброс, контраст соседей и палитра сетки. Признаки плиток считает воркер метрик, анализ сетки по ним —
-// analyzeGrid из core прямо здесь: на 90 плитках это миллисекунды. В проект ничего не пишется.
+// Вкладка «Анализ» инспектора (spec, модуль 3; docs/decisions/0018-features-grid-metrics.md, 0019-harmony.md):
+// карта яркости, ритм, разброс, контраст соседей, колесо тонов с гармонией и палитра сетки. Признаки плиток
+// считает воркер метрик, анализ сетки по ним — analyzeGrid из core прямо здесь: на 90 плитках это
+// миллисекунды. В проект ничего не пишется.
 import { useMemo, type CSSProperties, type MouseEvent } from 'react';
 import { analyzeGrid, type GridAnalysis, type GridMetrics, type LumaCell } from '@core/metrics/grid';
 import type { PaletteEntry } from '@core/metrics/palette';
@@ -10,6 +11,7 @@ import type { Project } from '@core/project/types';
 import { clickTileInAnalysis } from '../commands';
 import { useMetricsStore } from '../metrics';
 import { useAppStore } from '../store';
+import { HarmonySection } from './HarmonySection';
 
 const cssRgb = ([r, g, b]: readonly [number, number, number]) => `rgb(${r} ${g} ${b})`;
 const fixed = (value: number, digits = 2) => value.toFixed(digits);
@@ -46,6 +48,8 @@ export function AnalysisPanel({ project }: { project: Project }) {
           )}
           {analysis.metrics && (
             <>
+              <h3>Цвет</h3>
+              <HarmonySection metrics={analysis.metrics} bySlot={bySlot} />
               <h3>Палитра сетки</h3>
               <PaletteBar palette={analysis.metrics.palette} />
             </>

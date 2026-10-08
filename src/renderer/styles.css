@@ -1240,3 +1240,82 @@ button:disabled {
   flex-basis: 0;
   min-width: 2px;
 }
+
+/* Раздел «Цвет» (ADR 0019): колесо тонов с секторами шаблона и точками плиток. */
+.harmony-wheel {
+  position: relative;
+  width: 180px;
+  aspect-ratio: 1;
+  margin-bottom: 10px;
+}
+
+.harmony-wheel canvas,
+.harmony-wheel svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.harmony-wheel canvas {
+  opacity: 0.85;
+}
+
+.harmony-wheel svg {
+  overflow: visible;
+  pointer-events: none;
+}
+
+.harmony-shade {
+  fill: rgb(20 20 20 / 62%);
+}
+
+.harmony-sector {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 0.015;
+  stroke-linejoin: round;
+}
+
+.harmony-dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--control);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 65%);
+  cursor: pointer;
+}
+
+.harmony-dot:hover {
+  z-index: 1;
+}
+
+.harmony-dot.weightless {
+  opacity: 0.6;
+}
+
+.harmony-dot.outside {
+  border-color: var(--danger);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 65%),
+    0 0 0 3px var(--danger);
+}
+
+.harmony-dot.selected {
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 65%),
+    0 0 0 3px var(--text);
+}
+
+.rhythm-fits li.chosen {
+  font-weight: 600;
+}

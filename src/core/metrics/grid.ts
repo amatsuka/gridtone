@@ -1,7 +1,8 @@
 // Метрики сетки (docs/spec.md, «Метрики сетки»; docs/decisions/0018-features-grid-metrics.md): карта яркости
-// 3 × N, разброс L, контраст соседей, ритм, палитра сетки и точки колеса. Одна чистая функция над проектом
-// и признаками плиток: её вызывают вкладка «Анализ», тесты и скрипт `analyze`. Производные данные —
-// в проект и историю не попадают.
+// 3 × N, разброс L, контраст соседей, ритм, палитра сетки, точки колеса и гармония (ADR 0019). Одна чистая
+// функция над проектом и признаками плиток: её вызывают вкладка «Анализ», тесты и скрипт `analyze`.
+// Производные данные — в проект и историю не попадают.
+import { fitHarmony, type Harmony } from '../harmony/templates';
 import type { Features, Project, Vec3 } from '../project/types';
 import { meanChroma, meanHue } from './features';
 import { weightedPalette, type PaletteEntry } from './palette';
@@ -38,6 +39,8 @@ export interface GridMetrics {
   rhythm: Rhythm;
   palette: PaletteEntry[];
   wheel: WheelPoint[];
+  /** Гармония по точкам колеса; у шаблона `tiles[i]` — положение точки `wheel[i]` относительно секторов. */
+  harmony: Harmony;
 }
 
 export interface GridAnalysis {
@@ -90,15 +93,17 @@ export function analyzeGrid(
   if (!rhythm) return analysis;
 
   const tiles = measured.map((cell) => features[cell.slotId] as Features);
+  const wheel = measured.map((cell, i): WheelPoint => {
+    const f = tiles[i] as Features;
+    return { slotId: cell.slotId, hue: meanHue(f.meanA, f.meanB), chroma: meanChroma(f.meanA, f.meanB) };
+  });
   analysis.metrics = {
     spread: spreadOf(values),
     contrast: neighborContrast(values, columns),
     rhythm,
     palette: gridPalette(tiles),
-    wheel: measured.map((cell, i) => {
-      const f = tiles[i] as Features;
-      return { slotId: cell.slotId, hue: meanHue(f.meanA, f.meanB), chroma: meanChroma(f.meanA, f.meanB) };
-    }),
+    wheel,
+    harmony: fitHarmony(wheel),
   };
   return analysis;
 }
