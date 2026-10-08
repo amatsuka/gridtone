@@ -1,6 +1,9 @@
 // Имена файлов и папок экспорта: из имён образов и проекта, одинаково на macOS и Windows.
 
 const MAX_LENGTH = 100;
+
+/** Калибровочная карта в подпапке экспорта (docs/decisions/0016-calibration-card.md): `Калибровка.png`. */
+export const CARD_FILE_BASE = 'Калибровка';
 /** Запрещены в именах файлов Windows; «/» и «:» — ещё и на macOS. */
 const FORBIDDEN = /[/\\:*?"<>|]/g;
 const CONTROL = /[\u0000-\u001f\u007f]+/g;

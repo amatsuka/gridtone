@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   app,
   dialog,
@@ -7,8 +7,8 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron';
-import type { ExportStarted, LutImportResult, ProjectSnapshot } from '@shared/ipc';
-import { parseExportRequest, type ExportService } from './export';
+import type { CalibrationCheckResult, ExportStarted, LutImportResult, ProjectSnapshot } from '@shared/ipc';
+import { parseCalibrationRequest, parseExportRequest, type ExportService } from './export';
 import { IMPORT_EXTENSIONS, type ProjectService } from './project/service';
 
 export type Actions = ReturnType<typeof createActions>;
@@ -133,6 +133,40 @@ export function createActions(service: ProjectService, exporter: ExportService, 
       } catch (err) {
         await reportError('Не удалось начать экспорт', err);
         return null;
+      }
+    },
+
+    /**
+     * «Проверить карту…» (docs/decisions/0016-calibration-card.md): образ и его LUT проверяются до диалога,
+     * затем main спрашивает карту, которую вернул редактор. Ошибки возвращаются в renderer и видны в диалоге
+     * экспорта; null — отменено или проект уже другой.
+     */
+    async checkCalibration(request: unknown): Promise<CalibrationCheckResult | null> {
+      const parsed = parseCalibrationRequest(request);
+      const snapshot = service.snapshot();
+      if (!snapshot || snapshot.dir !== parsed.dir) return null;
+      const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+      let target: Awaited<ReturnType<ExportService['cardParams']>>;
+      try {
+        target = await exporter.cardParams(snapshot.project, parsed.lookId);
+      } catch (err) {
+        return { ok: false, error: message(err) };
+      }
+      const result = await showOpen({
+        title: 'Проверить калибровочную карту',
+        message: `Карта, которую редактор вернул с LUT образа «${target.look.name}»`,
+        buttonLabel: 'Проверить',
+        properties: ['openFile'],
+        filters: [{ name: 'Изображения', extensions: IMPORT_EXTENSIONS }],
+        ...(exportRoot ? { defaultPath: exportRoot } : {}),
+      });
+      const path = result.filePaths[0];
+      if (result.canceled || path === undefined) return null;
+      const file = basename(path);
+      try {
+        return { ok: true, file, lookName: target.look.name, report: await exporter.checkCard(path, target.params) };
+      } catch (err) {
+        return { ok: false, error: `${file}: ${message(err)}` };
       }
     },
 

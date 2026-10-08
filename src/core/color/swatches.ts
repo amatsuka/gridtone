@@ -12,8 +12,11 @@ export const WHEEL_PREVIEW_CHROMA = 0.14;
 
 export type HslProperty = 'hue' | 'sat' | 'lum';
 
-/** OKLCH → sRGB 0..1. Цвет вне охвата теряет хрому, а не тон: срез по каналам сдвинул бы тон образца. */
-function lchToSrgb(L: number, C: number, h: number): Rgb {
+/**
+ * OKLCH → sRGB 0..1. Цвет вне охвата теряет хрому, а не тон: срез по каналам сдвинул бы тон образца.
+ * Им же строятся патчи калибровочной карты (lut/calibration.ts).
+ */
+export function lchToSrgb(L: number, C: number, h: number): Rgb {
   const linear = (chroma: number) => oklabToLinearSrgb(oklchToOklab([L, chroma, h]));
   const inGamut = (rgb: Rgb) => rgb.every((v) => v >= -1e-9 && v <= 1 + 1e-9);
   let rgb = linear(C);

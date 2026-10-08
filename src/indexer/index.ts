@@ -1,6 +1,8 @@
-// Точка входа utility process: принимает задачи от main — строит прокси и экспортирует LUT.
+// Точка входа utility process: принимает задачи от main — строит прокси, экспортирует LUT и калибровочную
+// карту, проверяет возвращённую карту.
 import type { IndexJob, IndexerRequest, IndexerResponse } from '@shared/ipc';
-import { exportLuts } from './export';
+import { runCardCheck } from './calibration';
+import { runExport } from './export';
 import { IndexError, errorMessage, indexFile } from './proxies';
 
 const MAX_PARALLEL = 2;
@@ -30,11 +32,16 @@ let exportQueue = Promise.resolve();
 
 port.on('message', (event) => {
   const request = event.data as IndexerRequest;
-  if (request.type === 'export-lut') {
-    exportQueue = exportQueue.then(() => exportLuts(request, post)).catch((err: unknown) => {
+  if (request.type === 'export') {
+    exportQueue = exportQueue.then(() => runExport(request, post)).catch((err: unknown) => {
       post({ type: 'file', jobId: request.jobId, file: '', ok: false, error: errorMessage(err) });
       post({ type: 'done', jobId: request.jobId });
     });
+    return;
+  }
+  // Проверка карты — одна картинка, доли секунды: без очереди.
+  if (request.type === 'check-card') {
+    void runCardCheck(request, post);
     return;
   }
   index(request);

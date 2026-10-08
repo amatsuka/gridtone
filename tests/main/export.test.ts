@@ -6,13 +6,28 @@ import { lookPipeline } from '@core/lut/bake';
 import { identityLut, type Lut3D } from '@core/lut/lut3d';
 import { createAdjust, createProject } from '@core/project/defaults';
 import type { Project } from '@core/project/types';
-import type { ExportProgress, IndexerResponse, LutExportJob } from '@shared/ipc';
-import { ExportService, createExportFolder, lutExportItems, parseExportRequest, type LutExportPort } from '../../src/main/export';
+import type { CardReport } from '@core/lut/calibration';
+import type { CardCheckJob, ExportJob, ExportProgress, IndexerResponse } from '@shared/ipc';
+import {
+  ExportService,
+  createExportFolder,
+  lutExportItems,
+  parseCalibrationRequest,
+  parseExportRequest,
+  type ExportPort,
+} from '../../src/main/export';
 
-class FakePort implements LutExportPort {
-  readonly jobs: { job: Omit<LutExportJob, 'type'>; reply: (message: IndexerResponse) => void }[] = [];
-  exportLuts(job: Omit<LutExportJob, 'type'>, onMessage: (message: IndexerResponse) => void): void {
+const GEOMETRY: CardReport = { verdict: 'geometry', problem: 'proportions', width: 10, height: 10 };
+
+class FakePort implements ExportPort {
+  readonly jobs: { job: Omit<ExportJob, 'type'>; reply: (message: IndexerResponse) => void }[] = [];
+  readonly checks: Omit<CardCheckJob, 'type'>[] = [];
+  runExport(job: Omit<ExportJob, 'type'>, onMessage: (message: IndexerResponse) => void): void {
     this.jobs.push({ job, reply: onMessage });
+  }
+  async checkCard(job: Omit<CardCheckJob, 'type'>): Promise<CardReport> {
+    this.checks.push(job);
+    return GEOMETRY;
   }
 }
 
@@ -39,6 +54,8 @@ describe('запрос экспорта', () => {
     const ok = { dir: '/p', lut: { looks: [{ id: 'a', size: 65 }], cube: true, hald: false } };
     expect(parseExportRequest(ok)).toEqual(ok);
     expect(parseExportRequest({ dir: '/p' })).toEqual({ dir: '/p' });
+    expect(parseExportRequest({ dir: '/p', card: true })).toEqual({ dir: '/p', card: true });
+    expect(() => parseExportRequest({ dir: '/p', card: 'да' })).toThrow(/карты/);
     expect(() => parseExportRequest(null)).toThrow();
     expect(() => parseExportRequest({ dir: 1 })).toThrow();
     expect(() => parseExportRequest({ dir: '/p', lut: { looks: [{ id: 'a', size: 34 }], cube: true, hald: false } })).toThrow();
@@ -105,7 +122,7 @@ describe('образ с импортированным LUT (ADR 0015)', () => {
         },
       },
     });
-    const items = await service.plan(withLut(), request);
+    const { luts: items } = await service.plan(withLut(), request);
     expect(loaded).toEqual([LUT_ID]);
     expect(items[0]?.params).toEqual(lookPipeline(withLut().looks[0]!.adjust, lut));
     expect(items[1]?.params.lut).toBeUndefined();
@@ -143,7 +160,8 @@ describe('ExportService', () => {
     const { job, reply } = port.jobs[0]!;
     expect(job.jobId).toBe(first.jobId);
     expect(job.dir).toBe(first.dir);
-    expect(job.items.map((i) => i.fileBase)).toEqual(['Плёнка']);
+    expect(job.cardFile).toBeNull();
+    expect(job.luts.map((i) => i.fileBase)).toEqual(['Плёнка']);
     expect(progress.at(-1)).toEqual({ jobId: first.jobId, dir: first.dir, total: 2, done: 0, files: [], errors: [], finished: false });
 
     reply({ type: 'file', jobId: first.jobId, file: 'Плёнка.cube', ok: true });
@@ -163,5 +181,59 @@ describe('ExportService', () => {
     const second = await service.start(root, project(), request);
     expect(second.dir).toBe(join(root, 'Сетка — экспорт 2026-10-08 07-05-03 (2)'));
     expect((await readdir(root)).sort()).toEqual(['Сетка — экспорт 2026-10-08 07-05-03', 'Сетка — экспорт 2026-10-08 07-05-03 (2)']);
+  });
+});
+
+describe('калибровочная карта (ADR 0016)', () => {
+  test('карта — свой раздел экспорта: можно без LUT; образ «Калибровка» не затирает файл карты', async () => {
+    const port = new FakePort();
+    const progress: ExportProgress[] = [];
+    const service = new ExportService(port, (p) => progress.push(p));
+    expect(await service.plan(project(), { dir: '/p', card: true })).toEqual({ cardFile: 'Калибровка.png', luts: [] });
+    await expect(service.plan(project(), { dir: '/p', card: false })).rejects.toThrow(/Нечего/);
+
+    const started = await service.start(root, project(), { dir: '/p', card: true });
+    expect(port.jobs[0]?.job).toMatchObject({ dir: started.dir, cardFile: 'Калибровка.png', luts: [] });
+    expect(progress.at(-1)?.total).toBe(1);
+
+    const p = project();
+    p.looks[0]!.name = 'калибровка';
+    const plan = await service.plan(p, { dir: '/p', card: true, lut: { looks: [{ id: 'a', size: 33 }], cube: true, hald: true } });
+    expect(plan.cardFile).toBe('Калибровка.png');
+    expect(plan.luts.map((i) => i.fileBase)).toEqual(['калибровка 2']);
+    // Без карты имя образа не меняется.
+    const plain = await service.plan(p, { dir: '/p', lut: { looks: [{ id: 'a', size: 33 }], cube: true, hald: true } });
+    expect(plain.luts.map((i) => i.fileBase)).toEqual(['калибровка']);
+  });
+
+  test('ожидание — проход образа с его LUT; нет образа или копии LUT — ошибка до диалога', async () => {
+    const LUT_ID = 'fedcba9876543210';
+    const p = project();
+    p.luts[LUT_ID] = { id: LUT_ID, name: 'сепия.cube', size: 3, hash: LUT_ID.padEnd(64, '0'), importedAt: '2026-10-08T00:00:00.000Z' };
+    p.looks[2]!.importedLut = LUT_ID;
+    const lut = identityLut(3);
+    const port = new FakePort();
+    const service = new ExportService(port, () => {}, { luts: { loadLut: async () => lut } });
+
+    const plain = await service.cardParams(p, 'a');
+    expect(plain.look.name).toBe('Плёнка');
+    expect(plain.params).toEqual(lookPipeline(p.looks[0]!.adjust));
+    const withLut = await service.cardParams(p, 'c');
+    expect(withLut.params).toEqual(lookPipeline(p.looks[2]!.adjust, lut));
+    await expect(service.cardParams(p, 'нет')).rejects.toThrow(/удалён/);
+
+    const broken = new ExportService(port, () => {}, { luts: { loadLut: () => Promise.reject(new Error('LUT «сепия.cube»: файла нет')) } });
+    await expect(broken.cardParams(p, 'c')).rejects.toThrow(/сепия\.cube/);
+
+    expect(await service.checkCard('/карта.jpg', withLut.params)).toBe(GEOMETRY);
+    expect(port.checks).toHaveLength(1);
+    expect(port.checks[0]).toMatchObject({ path: '/карта.jpg', params: withLut.params });
+  });
+
+  test('запрос проверки карты из renderer проверяется', () => {
+    expect(parseCalibrationRequest({ dir: '/p', lookId: 'a' })).toEqual({ dir: '/p', lookId: 'a' });
+    expect(() => parseCalibrationRequest({ dir: '/p' })).toThrow();
+    expect(() => parseCalibrationRequest({ dir: 1, lookId: 'a' })).toThrow();
+    expect(() => parseCalibrationRequest(null)).toThrow();
   });
 });

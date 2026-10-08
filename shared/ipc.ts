@@ -1,5 +1,6 @@
 // Единый контракт IPC. Любой новый канал объявляется здесь и только здесь.
 import type { PipelineParams } from '@core/color/bake';
+import type { CardReport } from '@core/lut/calibration';
 import type { Lut3D } from '@core/lut/lut3d';
 import type { LutExportSize } from '@core/lut/verify';
 import type { ProjectPatch } from '@core/project/patch';
@@ -99,7 +100,18 @@ export interface ExportRequest {
   /** Проект, из которого экспортируем: если открыт уже другой, экспорт не начнётся. */
   dir: string;
   lut?: LutExportRequest;
+  /** Калибровочная карта `Калибровка.png` рядом с LUT (docs/decisions/0016-calibration-card.md). */
+  card?: boolean;
 }
+
+/** «Проверить карту…»: карту, которую вернул редактор, main спрашивает диалогом и сверяет с образом. */
+export interface CalibrationCheckRequest {
+  dir: string;
+  lookId: string;
+}
+
+/** Отчёт по карте или ошибка: образа нет, копия его LUT пропала, файл не читается. */
+export type CalibrationCheckResult = { ok: true; file: string; lookName: string; report: CardReport } | { ok: false; error: string };
 
 export interface ExportStarted {
   jobId: string;
@@ -134,6 +146,8 @@ export interface InvokeMap {
   'assets:import': { args: [paths?: string[]]; result: { jobId: string } | null };
   /** Спросить папку и начать экспорт в новую подпапку; ход — событием export:progress. null — отменено. */
   'export:run': { args: [request: ExportRequest]; result: ExportStarted | null };
+  /** Спросить возвращённую калибровочную карту и сверить её с образом. null — отменено или проект уже другой. */
+  'calibration:check': { args: [request: CalibrationCheckRequest]; result: CalibrationCheckResult | null };
   /** Спросить `.cube` и импортировать его новым образом. null — нет проекта или отменено. */
   'lut:import': { args: []; result: LutImportResult | null };
   /** Разобранный LUT по id из реестра открытого проекта. */
@@ -163,6 +177,7 @@ const invokeChannels = {
   'project:patch': true,
   'assets:import': true,
   'export:run': true,
+  'calibration:check': true,
   'lut:import': true,
   'lut:data': true,
 } satisfies Record<InvokeChannel, true>;
@@ -210,15 +225,29 @@ export interface LutExportItem {
   hald: boolean;
 }
 
-/** Запекание и запись LUT в utility process. Папка уже создана main; файлы в ней не перезаписываются. */
-export interface LutExportJob {
-  type: 'export-lut';
+/**
+ * Экспорт в utility process: калибровочная карта, затем LUT образов. Папка уже создана main;
+ * файлы в ней не перезаписываются.
+ */
+export interface ExportJob {
+  type: 'export';
   jobId: string;
   dir: string;
-  items: LutExportItem[];
+  /** Имя файла карты или null, если карта не нужна. */
+  cardFile: string | null;
+  luts: LutExportItem[];
 }
 
-export type IndexerRequest = IndexJob | LutExportJob;
+/** Проверка возвращённой карты: чтение рецептом цвета прокси (ADR 0004), замер и диагноз core. */
+export interface CardCheckJob {
+  type: 'check-card';
+  jobId: string;
+  path: string;
+  /** Проход образа: ожидание — то, что видно в Gridtone. */
+  params: PipelineParams;
+}
+
+export type IndexerRequest = IndexJob | ExportJob | CardCheckJob;
 
 export type IndexedAsset = Omit<AssetRef, 'importedAt'>;
 
@@ -230,4 +259,7 @@ export type IndexerResponse =
   /** Экспорт: файл записан (ok) или не записан; file — имя внутри папки задачи. */
   | { type: 'file'; jobId: string; file: string; ok: true }
   | { type: 'file'; jobId: string; file: string; ok: false; error: string }
+  /** Проверка карты: последнее сообщение задачи, 'done' после него не приходит. */
+  | { type: 'card'; jobId: string; ok: true; report: CardReport }
+  | { type: 'card'; jobId: string; ok: false; error: string }
   | { type: 'done'; jobId: string };

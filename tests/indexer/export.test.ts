@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { bakeLut, lookPipeline } from '@core/lut/bake';
 import { createAdjust } from '@core/project/defaults';
 import type { IndexerResponse, LutExportItem } from '@shared/ipc';
-import { exportLuts, lutExportFiles } from '../../src/indexer/export';
+import { exportFiles, runExport } from '../../src/indexer/export';
 import { readCube, readHald } from '../fixtures/lut';
 
 let root: string;
@@ -22,9 +22,9 @@ function item(fileBase: string, patch: Partial<LutExportItem> = {}): LutExportIt
   return { fileBase, title: fileBase, params: lookPipeline(look), size: 33, cube: true, hald: true, ...patch };
 }
 
-async function run(dir: string, items: LutExportItem[]): Promise<IndexerResponse[]> {
+async function run(dir: string, items: LutExportItem[], cardFile: string | null = null): Promise<IndexerResponse[]> {
   const messages: IndexerResponse[] = [];
-  await exportLuts({ type: 'export-lut', jobId: 'job', dir, items }, (m) => messages.push(m));
+  await runExport({ type: 'export', jobId: 'job', dir, cardFile, luts: items }, (m) => messages.push(m));
   return messages;
 }
 
@@ -34,7 +34,7 @@ describe('экспорт LUT в utility process', () => {
     await mkdir(dir);
     const items = [item('Плёнка'), item('Излом', { size: 65, hald: false, title: 'Излом "крутой"' })];
     const messages = await run(dir, items);
-    expect(lutExportFiles(items)).toEqual(['Плёнка.cube', 'Плёнка.png', 'Излом.cube']);
+    expect(exportFiles({ cardFile: null, luts: items })).toEqual(['Плёнка.cube', 'Плёнка.png', 'Излом.cube']);
     expect(messages).toEqual([
       { type: 'file', jobId: 'job', file: 'Плёнка.cube', ok: true },
       { type: 'file', jobId: 'job', file: 'Плёнка.png', ok: true },
@@ -60,6 +60,25 @@ describe('экспорт LUT в utility process', () => {
     for (let i = 0; i < grid.data.length; i++) {
       expect(Math.abs(hald.lut.data[i]! - grid.data[i]!)).toBeLessThanOrEqual(0.5 / 65535 + 1e-12);
     }
+  });
+
+  test('карта пишется первой, затем LUT; без LUT — одна карта', async () => {
+    const dir = join(root, 'card');
+    await mkdir(dir);
+    const items = [item('Калибровка 2', { hald: false })];
+    expect(exportFiles({ cardFile: 'Калибровка.png', luts: items })).toEqual(['Калибровка.png', 'Калибровка 2.cube']);
+    expect((await run(dir, items, 'Калибровка.png')).map((m) => (m.type === 'file' ? m.file : m.type))).toEqual([
+      'Калибровка.png',
+      'Калибровка 2.cube',
+      'done',
+    ]);
+    const only = join(root, 'card-only');
+    await mkdir(only);
+    expect(await run(only, [], 'Калибровка.png')).toEqual([
+      { type: 'file', jobId: 'job', file: 'Калибровка.png', ok: true },
+      { type: 'done', jobId: 'job' },
+    ]);
+    expect(await readdir(only)).toEqual(['Калибровка.png']);
   });
 
   test('существующий файл не перезаписывается: ошибка у него, остальные пишутся', async () => {

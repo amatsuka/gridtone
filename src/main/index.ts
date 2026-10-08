@@ -67,6 +67,7 @@ function registerIpc(): void {
     actions.importPhotos(Array.isArray(paths) && paths.every((p) => typeof p === 'string') ? paths : undefined),
   );
   handle('export:run', (request) => actions.exportProject(request));
+  handle('calibration:check', (request) => actions.checkCalibration(request));
   handle('lut:import', () => actions.importLut());
   handle('lut:data', (id) => service.lutData(id));
 }

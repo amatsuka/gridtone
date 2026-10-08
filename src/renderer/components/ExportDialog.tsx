@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
+import type { Rgb } from '@core/color/srgb';
+import { CARD_HEIGHT, CARD_LIMITS, CARD_WIDTH, type CardReport } from '@core/lut/calibration';
 import { LUT_CHECK_LIMITS, type LutCheck, type LutExportSize } from '@core/lut/verify';
 import type { Look } from '@core/project/types';
-import type { ExportProgress, ExportStarted } from '@shared/ipc';
+import type { CalibrationCheckResult, ExportProgress, ExportStarted } from '@shared/ipc';
 import { closeExportDialog } from '../commands';
 import { lutCheckKey, requestLutCheck, useLutChecks, type LutCheckResult } from '../lutCheck';
 import { lookLut, useLutStore, type LookLut } from '../luts';
 import { api, useAppStore } from '../store';
 
-/** Экран «Экспорт» (spec, «Экраны»). Этап 3а — раздел LUT (docs/decisions/0014-lut-export.md). */
+/**
+ * Экран «Экспорт» (spec, «Экраны»). Разделы: LUT (docs/decisions/0014-lut-export.md) и калибровочная
+ * карта (docs/decisions/0016-calibration-card.md).
+ */
 export function ExportDialog() {
   const open = useAppStore((state) => state.exportOpen);
   return open ? <ExportForm /> : null;
@@ -28,6 +33,8 @@ function ExportForm() {
   const [sizes, setSizes] = useState<Readonly<Record<string, LutExportSize>>>({});
   const [cube, setCube] = useState(true);
   const [hald, setHald] = useState(true);
+  /** Карта нужна один раз на редактор, поэтому по умолчанию не отмечена. */
+  const [card, setCard] = useState(false);
   const [run, setRun] = useState<RunState>({ state: 'idle' });
 
   // LUT образа входит в проверку (ADR 0015): пока его таблица едет из main, проверка ждёт.
@@ -53,7 +60,9 @@ function ExportForm() {
   const job = run.state === 'started' ? run.job : null;
   const current = job && progress?.jobId === job.jobId ? progress : null;
   const running = run.state === 'starting' || (job !== null && !current?.finished);
-  const ready = chosen.length > 0 && (cube || hald) && chosen.every((look) => !cube || sizeOf(look) !== undefined);
+  // Раздел LUT входит в экспорт, если отмечены образ и формат; карта — сама по себе.
+  const lutSection = chosen.length > 0 && (cube || hald);
+  const ready = (lutSection || card) && (!lutSection || chosen.every((look) => !cube || sizeOf(look) !== undefined));
 
   const toggle = (id: string) =>
     setSelected((now) => {
@@ -67,7 +76,8 @@ function ExportForm() {
     try {
       const started = await api.invoke('export:run', {
         dir: snapshot.dir,
-        lut: { looks: chosen.map((look) => ({ id: look.id, size: sizeOf(look) ?? 33 })), cube, hald },
+        ...(lutSection ? { lut: { looks: chosen.map((look) => ({ id: look.id, size: sizeOf(look) ?? 33 })), cube, hald } } : {}),
+        ...(card ? { card: true } : {}),
       });
       setRun(started ? { state: 'started', job: started } : { state: 'idle' });
     } catch (err) {
@@ -130,6 +140,8 @@ function ExportForm() {
           </p>
           <Recipes />
         </section>
+
+        <CalibrationSection dir={snapshot.dir} looks={looks} card={card} onCard={setCard} />
 
         {run.state === 'error' && (
           <p className="export-error" role="alert">
@@ -286,6 +298,155 @@ function Result({ dir, progress }: { dir: string; progress: ExportProgress | nul
           {message}
         </p>
       ))}
+    </div>
+  );
+}
+
+type CardCheckState = { state: 'idle' } | { state: 'checking' } | { state: 'done'; result: CalibrationCheckResult };
+
+/**
+ * Калибровочная карта (docs/decisions/0016-calibration-card.md): файл карты входит в экспорт, а
+ * «Проверить карту…» сверяет карту, которую вернул редактор, с выбранным образом.
+ */
+function CalibrationSection({
+  dir,
+  looks,
+  card,
+  onCard,
+}: {
+  dir: string;
+  looks: readonly Look[];
+  card: boolean;
+  onCard: (card: boolean) => void;
+}) {
+  const activeLookId = useAppStore((state) => state.activeLookId);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [check, setCheck] = useState<CardCheckState>({ state: 'idle' });
+  // Выбранный образ, иначе открытый во вкладке «Образ», иначе первый.
+  const lookId = [picked, activeLookId, looks[0]?.id].find((id) => id !== null && looks.some((look) => look.id === id));
+
+  const run = async () => {
+    if (!lookId) return;
+    setCheck({ state: 'checking' });
+    try {
+      const result = await api.invoke('calibration:check', { dir, lookId });
+      setCheck(result ? { state: 'done', result } : { state: 'idle' });
+    } catch (err) {
+      setCheck({ state: 'done', result: { ok: false, error: err instanceof Error ? err.message : String(err) } });
+    }
+  };
+
+  return (
+    <section className="export-section" data-testid="calibration-section">
+      <h3>Калибровочная карта</h3>
+      <label className="check">
+        <input type="checkbox" checked={card} onChange={() => onCard(!card)} />
+        Калибровочная карта
+      </label>
+      <p className="muted export-note">
+        Калибровка.png, {CARD_WIDTH} × {CARD_HEIGHT}, sRGB. Наложите на неё LUT в редакторе так же, как на фото, сохраните
+        JPEG или PNG в sRGB и проверьте здесь. Размер менять можно, обрезать и поворачивать — нет.
+      </p>
+      <div className="card-check-row">
+        <select
+          aria-label="Образ для проверки"
+          value={lookId ?? ''}
+          disabled={looks.length === 0}
+          onChange={(e) => setPicked(e.target.value)}
+        >
+          {looks.length === 0 && <option value="">Образов нет</option>}
+          {looks.map((look) => (
+            <option key={look.id} value={look.id}>
+              {look.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" disabled={!lookId || check.state === 'checking'} onClick={() => void run()}>
+          {check.state === 'checking' ? 'Проверка…' : 'Проверить карту…'}
+        </button>
+      </div>
+      {check.state === 'done' && <CardResult result={check.result} />}
+    </section>
+  );
+}
+
+const VERDICTS: Record<CardReport['verdict'], { title: string; hint: string }> = {
+  match: { title: 'Совпадает', hint: 'LUT стоит в правильной точке: редактор даёт то же, что Gridtone.' },
+  'no-lut': {
+    title: 'Не совпадает: LUT не применён',
+    hint: 'Карта вернулась без изменений. Проверьте, что слой или профиль с LUT включён и экспорт идёт после него.',
+  },
+  twice: {
+    title: 'Не совпадает: LUT применён дважды',
+    hint: 'LUT стоит два раза — например, слоем и в профиле. Уберите лишний.',
+  },
+  shifted: {
+    title: 'Не совпадает: цвет сдвинут',
+    hint:
+      'LUT получил не ту картинку, что видит Gridtone, или редактор меняет цвет после него. Под LUT должна быть карта ' +
+      'без правок, открытая в sRGB без перевода в другое пространство; экспорт — в sRGB без своих поправок.',
+  },
+  geometry: { title: 'Карта обрезана или повёрнута', hint: '' },
+};
+
+function geometryHint(report: Extract<CardReport, { verdict: 'geometry' }>): string {
+  const size = `${report.width} × ${report.height}`;
+  return report.problem === 'small'
+    ? `Карта ${size} уменьшена больше чем в 4 раза: патчи не измерить. Сохраните её крупнее.`
+    : `Пропорции ${size} не совпадают с картой ${CARD_WIDTH} × ${CARD_HEIGHT}. Сохраните карту целиком, без кадра и поворота; размер менять можно.`;
+}
+
+const css = (rgb: Rgb) => `rgb(${rgb.map((v) => Math.round(v * 255)).join(' ')})`;
+
+function CardResult({ result }: { result: CalibrationCheckResult }) {
+  if (!result.ok) {
+    return (
+      <p className="export-error" role="alert" data-testid="card-error">
+        {result.error}
+      </p>
+    );
+  }
+  const { report } = result;
+  const verdict = VERDICTS[report.verdict];
+  const title = report.verdict === 'geometry' && report.problem === 'small' ? 'Карта слишком маленькая' : verdict.title;
+  return (
+    <div
+      className="card-report"
+      data-testid="card-report"
+      data-verdict={report.verdict}
+      data-file={result.file}
+      data-mean={report.verdict === 'geometry' ? '' : report.models.lut.mean}
+    >
+      <p className={`card-verdict ${report.verdict === 'match' ? 'pass' : 'fail'}`}>{title}</p>
+      <p className="muted">
+        {result.file} · образ «{result.lookName}»
+      </p>
+      {report.verdict === 'geometry' ? (
+        <p>{geometryHint(report)}</p>
+      ) : (
+        <>
+          <p>
+            ΔE2000 ср. {f2(report.models.lut.mean)} · 95% {f2(report.models.lut.p95)} · худший {f2(report.models.lut.max)}
+            <span className="muted">
+              {' '}
+              (порог: ср. &lt; {CARD_LIMITS.mean}, худший &lt; {CARD_LIMITS.max})
+            </span>
+          </p>
+          <p>{verdict.hint}</p>
+          {report.weak && <p className="muted">Образ почти не меняет цвет: карта не отличит LUT от его отсутствия.</p>}
+          <ul className="card-worst" aria-label="Худшие патчи">
+            {report.worst.map((patch) => (
+              <li key={patch.index} data-testid="card-worst">
+                <span className="card-swatch" style={{ background: css(patch.expected) }} title="Ожидалось — как в Gridtone" />
+                <span className="card-swatch" style={{ background: css(patch.measured) }} title="Получено" />
+                <span className="card-patch-label">{patch.label}</span>
+                <span className="muted">ΔE {f2(patch.deltaE)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="muted card-legend">Слева — ожидалось, как в Gridtone; справа — получено из редактора.</p>
+        </>
+      )}
     </div>
   );
 }

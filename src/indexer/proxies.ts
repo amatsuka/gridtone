@@ -1,6 +1,6 @@
 import { access, mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import sharp from 'sharp';
+import sharp, { type Sharp } from 'sharp';
 import type { ImageFormat } from '@core/project/types';
 import { PROXY_SIZES, proxyRelPath, type ProxySize } from '@shared/cache';
 import type { IndexErrorCode, IndexItem, IndexedAsset } from '@shared/ipc';
@@ -68,13 +68,17 @@ export async function indexFile(item: IndexItem, cacheDir: string): Promise<Inde
 }
 
 /**
- * Прокси в sRGB со вшитым профилем. pipelineColourspace('srgb') обязателен:
- * без него 16-битные файлы получают неверный цвет (docs/decisions/0004-proxies.md).
+ * Рецепт цвета прокси без уменьшения: EXIF-поворот и перевод в sRGB по встроенному ICC.
+ * pipelineColourspace('srgb') обязателен: без него 16-битные файлы получают неверный цвет
+ * (docs/decisions/0004-proxies.md). Им же читаются возвращённая калибровочная карта и, на этапе 3г, оригиналы.
  */
+export function decodeSrgb(src: string): Sharp {
+  return sharp(src, { failOn: 'error' }).autoOrient().pipelineColourspace('srgb');
+}
+
+/** Прокси в sRGB со вшитым профилем. */
 export function renderProxy(src: string, size: ProxySize): Promise<Buffer> {
-  return sharp(src, { failOn: 'error' })
-    .autoOrient()
-    .pipelineColourspace('srgb')
+  return decodeSrgb(src)
     .resize({ width: size, height: size, fit: PROXY_FIT[size], withoutEnlargement: true })
     .flatten({ background: '#ffffff' })
     .withIccProfile('srgb')
