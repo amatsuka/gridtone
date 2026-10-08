@@ -25,10 +25,15 @@ export function metricsWindowSize(ratio: Ratio): [number, number] {
   return ratio === '1:1' ? [METRICS_WINDOW_WIDTH, METRICS_WINDOW_WIDTH] : [METRICS_WINDOW_WIDTH, (METRICS_WINDOW_WIDTH * 4) / 3];
 }
 
+/** Окно метрик до конвейера: RGB 0..1 подряд, metricsWindowSize точек, строки сверху вниз. */
+export function windowRgb(image: RgbaImage, crop: Crop, ratio: Ratio): Float32Array {
+  const [width, height] = metricsWindowSize(ratio);
+  return sampleWindow(image, gridWindowTransform(image.width, image.height, crop, ratio), width, height);
+}
+
 /** Пиксели окна сетки после конвейера, в OKLab подряд (L, a, b). */
 export function tileLab(image: RgbaImage, crop: Crop, ratio: Ratio, params: PipelineParams): Float32Array {
-  const [width, height] = metricsWindowSize(ratio);
-  const rgb = sampleWindow(image, gridWindowTransform(image.width, image.height, crop, ratio), width, height);
+  const rgb = windowRgb(image, crop, ratio);
   const baked = bakePipeline(params);
   const out = new Float32Array(rgb.length);
   for (let i = 0; i < rgb.length; i += 3) {

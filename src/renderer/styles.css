@@ -1367,3 +1367,26 @@ button:disabled {
 .outlier-marks {
   font-size: 12px;
 }
+
+/* Поправка выброса (ADR 0021): под причинами, с отступом номера. */
+.outlier-fix {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  margin: 0 0 6px;
+  padding: 0 6px 0 32px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.outlier-fix .apply-fix {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+.outlier-replace {
+  color: var(--danger);
+  font-weight: 600;
+}

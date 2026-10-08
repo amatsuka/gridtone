@@ -5,11 +5,13 @@
 // Метрики — производные данные: в проект и в историю они не попадают.
 import { create } from 'zustand';
 import type { PipelineParams } from '@core/color/bake';
+import type { Lut3D } from '@core/lut/lut3d';
 import type { TileMetrics } from '@core/metrics/tile';
 import { createAdjust } from '@core/project/defaults';
 import { proxyUrl } from '@shared/cache';
+import type { ProjectSnapshot } from '@shared/ipc';
 import type { ViewMode } from '@shared/view';
-import { lookLut, useLutStore } from './luts';
+import { lookLut, useLutStore, type LutEntry } from './luts';
 import { useAppStore, type InspectorTab } from './store';
 import type { MetricsRequest, MetricsResponse, WorkerLut } from './workers/protocol';
 
@@ -21,15 +23,63 @@ const NEUTRAL = createAdjust();
 interface MetricsState {
   /** Метрики по id слота. Пока новые считаются, у слота остаются прежние. */
   bySlot: Readonly<Record<string, TileMetrics>>;
+  /** Ключ запроса, по которому посчитаны метрики слота: совпал с нынешним — метрики свежие (поправки, ADR 0021). */
+  keys: Readonly<Record<string, string>>;
   /** Плиток, чьи метрики нужны сейчас (с готовым прокси), и сколько из них уже посчитано для текущих правок. */
   progress: { done: number; total: number };
 }
 
-export const useMetricsStore = create<MetricsState>()(() => ({ bySlot: {}, progress: { done: 0, total: 0 } }));
+export const useMetricsStore = create<MetricsState>()(() => ({ bySlot: {}, keys: {}, progress: { done: 0, total: 0 } }));
 
 /** Метрики нужны режимам 5 и 7 и открытой вкладке «Анализ». */
 export function needsMetrics({ viewMode, inspectorTab }: { viewMode: ViewMode; inspectorTab: InspectorTab }): boolean {
   return viewMode === 'dominant' || viewMode === 'deviation' || inspectorTab === 'analysis';
+}
+
+/** Запрос метрик слота и LUT его образа, если он есть. */
+export interface SlotRequest {
+  request: MetricsRequest;
+  lut?: { id: string; lut: Lut3D };
+}
+
+/**
+ * Запросы метрик по слотам с готовым прокси, в порядке сетки: ключ кэша — ассет, сетка, кадр, параметры
+ * конвейера и id LUT. Пока таблица LUT образа едет из main, слота нет. Их же берут поправки (fixes.ts).
+ */
+export function slotRequests(
+  snapshot: ProjectSnapshot,
+  lutTables: Readonly<Record<string, LutEntry>>,
+  showOriginal: boolean,
+): Map<string, SlotRequest> {
+  const { project, assets } = snapshot;
+  const ratio = project.grid.ratio;
+  const looks = new Map(project.looks.map((look) => [look.id, look]));
+  const requests = new Map<string, SlotRequest>();
+  for (const slot of project.slots) {
+    const { assetId } = slot;
+    if (!assetId || assets[assetId]?.proxy !== 'ready') continue;
+    const look = slot.lookId ? looks.get(slot.lookId) : undefined;
+    // Шаг 9: пока таблица LUT едет из main, метрики плитки не считаются — как и холст её не рисует.
+    const lut = showOriginal ? null : lookLut(look, snapshot.luts, lutTables);
+    if (lut?.state === 'loading') continue;
+    const lutId = lut?.state === 'ready' ? lut.id : undefined;
+    // До/после: метрики исходника, как и холст.
+    const params: PipelineParams = showOriginal ? { photo: NEUTRAL } : { photo: slot.adjust, look: look?.adjust };
+    // id LUT выводится из содержимого: он определяет таблицу, и ключ остаётся коротким.
+    const key = JSON.stringify([assetId, ratio, slot.crop, params, lutId ?? null]);
+    const request: MetricsRequest = {
+      type: 'tile',
+      key,
+      assetId,
+      url: proxyUrl(assetId, 512),
+      crop: slot.crop,
+      ratio,
+      params,
+      ...(lutId === undefined ? {} : { lutId }),
+    };
+    requests.set(slot.id, lut?.state === 'ready' ? { request, lut: { id: lut.id, lut: lut.lut } } : { request });
+  }
+  return requests;
 }
 
 /** Подписывается на проект, режим просмотра и вкладку. Воркер создаётся, когда метрики понадобились впервые. */
@@ -46,16 +96,22 @@ export function connectMetrics(): () => void {
 
   const publish = () => {
     frame = 0;
-    const previous = useMetricsStore.getState().bySlot;
+    const previous = useMetricsStore.getState();
     const bySlot: Record<string, TileMetrics> = {};
+    const keys: Record<string, string> = {};
     let done = 0;
     for (const [slotId, key] of wanted) {
       const fresh = cache.get(key);
-      if (fresh) done++;
-      const metrics = fresh ?? previous[slotId];
-      if (metrics) bySlot[slotId] = metrics;
+      if (fresh) {
+        done++;
+        bySlot[slotId] = fresh;
+        keys[slotId] = key;
+      } else if (previous.bySlot[slotId]) {
+        bySlot[slotId] = previous.bySlot[slotId];
+        keys[slotId] = previous.keys[slotId] ?? '';
+      }
     }
-    useMetricsStore.setState({ bySlot, progress: { done, total: wanted.size } });
+    useMetricsStore.setState({ bySlot, keys, progress: { done, total: wanted.size } });
   };
   // Ответы воркера приходят по одному: в стор они уходят не чаще раза в кадр.
   const publishSoon = () => {
@@ -69,6 +125,7 @@ export function connectMetrics(): () => void {
       console.error('Метрики плитки не посчитаны', response.error);
       return;
     }
+    if (response.type !== 'tile') return;
     cache.set(response.key, response.metrics);
     for (const key of cache.keys()) {
       if (cache.size <= CACHE_LIMIT) break;
@@ -90,24 +147,10 @@ export function connectMetrics(): () => void {
     const state = useAppStore.getState();
     const { snapshot, showOriginal } = state;
     if (!snapshot || !needsMetrics(state)) return;
-    const { project, assets } = snapshot;
-    const ratio = project.grid.ratio;
-    const looks = new Map(project.looks.map((look) => [look.id, look]));
-    const lutTables = useLutStore.getState().byId;
     wanted = new Map();
-    for (const slot of project.slots) {
-      const { assetId } = slot;
-      if (!assetId || assets[assetId]?.proxy !== 'ready') continue;
-      const look = slot.lookId ? looks.get(slot.lookId) : undefined;
-      // Шаг 9: пока таблица LUT едет из main, метрики плитки не считаются — как и холст её не рисует.
-      const lut = showOriginal ? null : lookLut(look, snapshot.luts, lutTables);
-      if (lut?.state === 'loading') continue;
-      const lutId = lut?.state === 'ready' ? lut.id : undefined;
-      // До/после: метрики исходника, как и холст.
-      const params: PipelineParams = showOriginal ? { photo: NEUTRAL } : { photo: slot.adjust, look: look?.adjust };
-      // id LUT выводится из содержимого: он определяет таблицу, и ключ остаётся коротким.
-      const key = JSON.stringify([assetId, ratio, slot.crop, params, lutId ?? null]);
-      wanted.set(slot.id, key);
+    for (const [slotId, { request, lut }] of slotRequests(snapshot, useLutStore.getState().byId, showOriginal)) {
+      const { key } = request;
+      wanted.set(slotId, key);
       const cached = cache.get(key);
       if (cached) {
         // Недавно нужное — в конец, чтобы кэш вытеснял давно не нужное.
@@ -118,21 +161,11 @@ export function connectMetrics(): () => void {
       if (pending.has(key)) continue;
       pending.add(key);
       worker ??= createWorker();
-      if (lut?.state === 'ready' && !sentLuts.has(lut.id)) {
+      if (lut && !sentLuts.has(lut.id)) {
         const message: WorkerLut = { type: 'lut', id: lut.id, lut: lut.lut };
         worker.postMessage(message);
         sentLuts.add(lut.id);
       }
-      const request: MetricsRequest = {
-        type: 'tile',
-        key,
-        assetId,
-        url: proxyUrl(assetId, 512),
-        crop: slot.crop,
-        ratio,
-        params,
-        ...(lutId === undefined ? {} : { lutId }),
-      };
       worker.postMessage(request);
     }
     publish();

@@ -1,5 +1,6 @@
 // Сообщения renderer ↔ воркеры метрик (docs/decisions/0012-view-modes.md) и проверки LUT. Внутри renderer, не IPC Electron.
 import type { PipelineParams } from '@core/color/bake';
+import type { FixTarget, TileFix } from '@core/harmony/fixes';
 import type { Lut3D } from '@core/lut/lut3d';
 import type { LutSizeChoice } from '@core/lut/verify';
 import type { TileMetrics } from '@core/metrics/tile';
@@ -29,9 +30,21 @@ export interface MetricsRequest {
   lutId?: string;
 }
 
-export type MetricsMessage = WorkerLut | MetricsRequest;
+/**
+ * Поправка выброса (docs/decisions/0021-fixes.md): тот же прокси, окно и конвейер, что у метрик плитки, и что
+ * чинить. key — ключ метрик слота и цель поправки: ответ приходит с ним же.
+ */
+export interface FixRequest extends Omit<MetricsRequest, 'type'> {
+  type: 'fix';
+  target: FixTarget;
+}
 
-export type MetricsResponse = { key: string; ok: true; metrics: TileMetrics } | { key: string; ok: false; error: string };
+export type MetricsMessage = WorkerLut | MetricsRequest | FixRequest;
+
+export type MetricsResponse =
+  | { type: 'tile'; key: string; ok: true; metrics: TileMetrics }
+  | { type: 'fix'; key: string; ok: true; fix: TileFix }
+  | { type: 'tile' | 'fix'; key: string; ok: false; error: string };
 
 /** Проверка по кругу для диалога экспорта (docs/decisions/0014-lut-export.md). key — коррекция образа и id LUT в JSON. */
 export interface LutCheckRequest {

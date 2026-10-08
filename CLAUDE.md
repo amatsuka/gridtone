@@ -41,6 +41,8 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
   гармония — fitHarmony (core/harmony/templates.ts, ADR 0019) и выбросы — tileExpectations
   (core/harmony/outliers.ts, ADR 0020) внутри него; режим 7 и вкладка «Анализ» берут один расчёт
   (renderer/analysis.ts). Анализ — производные данные, в проект и историю не пишется (ADR 0018).
+  Поправки выбросов — findFix (core/harmony/fixes.ts, ADR 0021): поиск одного ползунка через весь конвейер
+  плитки; «Применить» — applyTileFix, одна правка editProject; «заменить» в проект не пишется.
 - LUT запекается только через core/lut/bake.ts — узлы из applyBaked, без шейдера (ADR 0014).
   Экспорт пишет только в новую подпапку и с флагом wx: существующие файлы не перезаписываются.
 - Посты и `Сетка.png` режутся из оригинала, сверенного по хэшу, по feedFrameTransform / gridWindowTransform;

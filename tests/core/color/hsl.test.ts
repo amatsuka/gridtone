@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyHsl, bakeHslTable, HUE_BAND_CENTERS, hueBandWeights } from '@core/color/hsl';
+import { applyHsl, bakeHslTable, HSL_HUE_SHIFT, HUE_BAND_CENTERS, hueBandPair, hueBandWeights } from '@core/color/hsl';
 import type { Lch } from '@core/color/srgb';
 import { createAdjust, HUE_BANDS } from '@core/project/defaults';
 import type { Adjust, HueBand } from '@core/project/types';
@@ -39,6 +39,17 @@ describe('HSL по 8 диапазонам в OKLCH', () => {
         if (!inside) expect(hueBandWeights(h)[i]).toBe(0);
       }
     });
+  });
+
+  it('два диапазона вокруг тона: одно значение обоим сдвигает тон ровно на 30° · v / 100', () => {
+    expect(hueBandPair(232)).toEqual({ bands: ['aqua', 'blue'], weight: expect.closeTo(0.57, 1) });
+    expect(hueBandPair(10).bands).toEqual(['magenta', 'red']);
+    expect(hueBandPair(HUE_BAND_CENTERS.green).bands).toEqual(['green', 'aqua']);
+    for (const h of [200, 232, 260]) {
+      const hsl = createAdjust().hsl;
+      for (const band of hueBandPair(h).bands) hsl[band] = { hue: -50, sat: 0, lum: 0 };
+      expect(hueDistance(apply([0.6, 0.1, h], hsl)[2], h - HSL_HUE_SHIFT * 0.5)).toBeLessThan(1e-4);
+    }
   });
 
   it('нейтральные значения — таблицы нет', () => {

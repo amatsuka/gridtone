@@ -1,6 +1,7 @@
 // Действия пользователя над сеткой: выделение, перестановка, копирование правок, образы, редактор фото, команды меню.
 // Проект меняется только через editProject — так каждое действие попадает в историю (ADR 0011).
 import { original } from 'immer';
+import { applyFix, type TileFix } from '@core/harmony/fixes';
 import { copyAdjustGroups, type AdjustGroup } from '@core/project/adjustGroups';
 import { assignLook, createLook, duplicateLook, nextLookName, removeLook } from '@core/project/looks';
 import { moveSlots, shiftSlots } from '@core/project/order';
@@ -94,6 +95,18 @@ export function editSlotAdjust(slotId: string, change: (adjust: Adjust) => void,
     const slot = draft.slots.find((s) => s.id === slotId);
     if (slot) change(slot.adjust);
   }, gesture);
+}
+
+/**
+ * «Применить» поправку выброса (ADR 0021): значение ползунка — в поправку фото, одна запись истории.
+ * Значение абсолютное, поэтому повторное нажатие ничего не меняет. Опубликованные не правятся.
+ */
+export function applyTileFix(slotId: string, fix: TileFix): void {
+  if (fix.replace) return;
+  editProject((draft) => {
+    const slot = draft.slots.find((s) => s.id === slotId);
+    if (slot && slot.state !== 'published') applyFix(slot.adjust, fix);
+  });
 }
 
 /** Правка кадра слота: редактор фото. Один жест мыши — одна запись истории. */

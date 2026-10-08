@@ -1,10 +1,12 @@
 // Воркер метрик для режимов 5 и 7 и вкладки «Анализ» (docs/decisions/0012-view-modes.md, 0018-features-grid-metrics.md):
 // прокси 512 → окно сетки → конвейер core → OKLab → признаки плитки и доминанта. Сам расчёт — tileMetrics
 // из core; здесь только декодирование и очередь. Анализ сетки по готовым признакам — в renderer.
+// Поправки выбросов (ADR 0021) — findFix из core по тому же окну; их считает второй экземпляр воркера.
+import { findFix, searchWindow } from '@core/harmony/fixes';
 import type { RgbaImage } from '@core/image/sample';
-import { tileMetrics } from '@core/metrics/tile';
+import { tileMetrics, windowRgb } from '@core/metrics/tile';
 import type { Lut3D } from '@core/lut/lut3d';
-import type { MetricsMessage, MetricsRequest, MetricsResponse } from './protocol';
+import type { FixRequest, MetricsMessage, MetricsRequest, MetricsResponse } from './protocol';
 
 /** Декодированных прокси в памяти: по 512 × 683 × 4 ≈ 1.4 МБ. */
 const MAX_IMAGES = 24;
@@ -39,15 +41,19 @@ function proxy(assetId: string, url: string): Promise<RgbaImage> {
   return entry;
 }
 
-async function handle(request: MetricsRequest): Promise<MetricsResponse> {
+async function handle(request: MetricsRequest | FixRequest): Promise<MetricsResponse> {
   try {
     const image = await proxy(request.assetId, request.url);
     const lut = request.lutId === undefined ? undefined : luts.get(request.lutId);
     if (request.lutId !== undefined && !lut) throw new Error(`LUT ${request.lutId} не прислан`);
     const params = lut ? { ...request.params, lut } : request.params;
-    return { key: request.key, ok: true, metrics: tileMetrics(image, request.crop, request.ratio, params) };
+    if (request.type === 'fix') {
+      const window = searchWindow(windowRgb(image, request.crop, request.ratio), request.ratio);
+      return { type: 'fix', key: request.key, ok: true, fix: findFix(window, params, request.target) };
+    }
+    return { type: 'tile', key: request.key, ok: true, metrics: tileMetrics(image, request.crop, request.ratio, params) };
   } catch (err) {
-    return { key: request.key, ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { type: request.type, key: request.key, ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

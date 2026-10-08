@@ -17,6 +17,9 @@ const GRID_KEYS = ['cx', 'cy'];
 const LOOK_KEYS = ['id', 'name', 'adjust'];
 
 export const LOOK_NAME_MAX = 100;
+/** Пределы ползунков: экспозиция −EXPOSURE_MAX…EXPOSURE_MAX EV, остальные и тон HSL — −SLIDER_MAX…SLIDER_MAX. */
+export const EXPOSURE_MAX = 3;
+export const SLIDER_MAX = 100;
 /** Кадр: увеличение 1…CROP_ZOOM_MAX, поворот −CROP_ANGLE_MAX…CROP_ANGLE_MAX градусов. */
 export const CROP_ZOOM_MAX = 10;
 export const CROP_ANGLE_MAX = 45;
@@ -25,15 +28,14 @@ export const CURVE_MAX_POINTS = 16;
 
 export function isValidAdjust(value: unknown): value is Adjust {
   if (!hasKeys(value, ADJUST_KEYS)) return false;
-  if (!inRange(value['exposure'], -3, 3)) return false;
-  if (!SLIDERS_100.every((key) => inRange(value[key], -100, 100))) return false;
+  if (!inRange(value['exposure'], -EXPOSURE_MAX, EXPOSURE_MAX)) return false;
+  if (!SLIDERS_100.every((key) => inRange(value[key], -SLIDER_MAX, SLIDER_MAX))) return false;
 
   const hsl = value['hsl'];
   if (!hasKeys(hsl, HUE_BANDS)) return false;
   for (const band of HUE_BANDS) {
     const b = hsl[band];
-    if (!hasKeys(b, HSL_KEYS) || !inRange(b['hue'], -100, 100) || !inRange(b['sat'], -100, 100) || !inRange(b['lum'], -100, 100))
-      return false;
+    if (!hasKeys(b, HSL_KEYS) || !HSL_KEYS.every((key) => inRange(b[key], -SLIDER_MAX, SLIDER_MAX))) return false;
   }
 
   const grading = value['grading'];

@@ -31,23 +31,38 @@ export const HSL_TABLE_SIZE = 360;
 
 const CENTERS = HUE_BANDS.map((band) => HUE_BAND_CENTERS[band]);
 
-/** Вес каждого диапазона для тона, в порядке HUE_BANDS. Веса двух соседних центров, в сумме 1. */
-export function hueBandWeights(hue: number): number[] {
-  const weights = new Array<number>(CENTERS.length).fill(0);
+/** Отрезок круга между соседними центрами, в котором лежит тон: индексы диапазонов и вес второго. */
+function bandSegment(hue: number): { i: number; j: number; t: number } | null {
   const h = ((hue % 360) + 360) % 360;
   for (let i = 0; i < CENTERS.length; i++) {
     const from = CENTERS[i] as number;
     const j = (i + 1) % CENTERS.length;
     const span = ((CENTERS[j] as number) - from + 360) % 360;
     const offset = (h - from + 360) % 360;
-    if (offset < span) {
-      const t = smoothstep(0, 1, offset / span);
-      weights[i] = 1 - t;
-      weights[j] = t;
-      break;
-    }
+    if (offset < span) return { i, j, t: smoothstep(0, 1, offset / span) };
+  }
+  // Отрезки покрывают весь круг: сюда попадает только NaN.
+  return null;
+}
+
+/** Вес каждого диапазона для тона, в порядке HUE_BANDS. Веса двух соседних центров, в сумме 1. */
+export function hueBandWeights(hue: number): number[] {
+  const weights = new Array<number>(CENTERS.length).fill(0);
+  const segment = bandSegment(hue);
+  if (segment) {
+    weights[segment.i] = 1 - segment.t;
+    weights[segment.j] = segment.t;
   }
   return weights;
+}
+
+/**
+ * Два соседних диапазона, между центрами которых лежит тон, и вес второго. Одно значение тона у обоих
+ * сдвигает такой тон ровно на HSL_HUE_SHIFT · значение / 100: веса в сумме 1 (поправка тона, ADR 0021).
+ */
+export function hueBandPair(hue: number): { bands: [HueBand, HueBand]; weight: number } {
+  const { i, j, t } = bandSegment(hue) ?? { i: 0, j: 1, t: 0 };
+  return { bands: [HUE_BANDS[i] as HueBand, HUE_BANDS[j] as HueBand], weight: t };
 }
 
 /** Как сильно HSL действует на цвет с хромой C. */
