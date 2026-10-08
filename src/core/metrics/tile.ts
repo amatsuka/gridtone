@@ -1,5 +1,6 @@
-// Метрики плитки для режимов 5 и 7 (docs/decisions/0012-view-modes.md): окно сетки из прокси 512 →
-// конвейер core → OKLab → палитра и средние. Одна функция для воркера метрик и для тестов.
+// Метрики плитки (docs/decisions/0012-view-modes.md, 0018-features-grid-metrics.md): окно сетки из прокси 512 →
+// конвейер core → OKLab → признаки (`Features`), тон среднего и доминанта. Одна функция для воркера метрик
+// и для тестов: режимы 5 и 7 берут доминанту и средние, вкладка «Анализ» — признаки целиком.
 import { bakePipeline, type PipelineParams } from '../color/bake';
 import { linearSrgbToOklab, oklabToLinearSrgb } from '../color/oklab';
 import { applyBaked } from '../color/pipeline';
@@ -7,14 +8,15 @@ import type { Lab } from '../color/srgb';
 import { decodeSrgb, encodeSrgbClamped } from '../color/transfer';
 import { sampleWindow, type RgbaImage } from '../image/sample';
 import { gridWindowTransform } from '../project/crop';
-import type { Crop, Ratio, Vec3 } from '../project/types';
-import { labStats, palette, type LabStats, type PaletteEntry } from './palette';
+import type { Crop, Features, Ratio, Vec3 } from '../project/types';
+import { meanHue, tileFeatures } from './features';
 
 /** Ширина окна метрик; высота — по пропорциям сетки. Прокси 256 нет (ADR 0004), окно уменьшается из 512. */
 export const METRICS_WINDOW_WIDTH = 192;
 
-export interface TileMetrics extends LabStats {
-  palette: PaletteEntry[];
+export interface TileMetrics extends Features {
+  /** Тон среднего цвета (a, b), градусы 0..360; у серого 0. */
+  hue: number;
   /** Главный цвет — первый в палитре. */
   dominant: Vec3;
 }
@@ -40,9 +42,9 @@ export function tileLab(image: RgbaImage, crop: Crop, ratio: Ratio, params: Pipe
 }
 
 export function tileMetrics(image: RgbaImage, crop: Crop, ratio: Ratio, params: PipelineParams): TileMetrics {
-  const labs = tileLab(image, crop, ratio, params);
-  const colors = palette(labs);
-  return { ...labStats(labs), palette: colors, dominant: colors[0]?.lab ?? [0, 0, 0] };
+  const [width, height] = metricsWindowSize(ratio);
+  const features = tileFeatures(tileLab(image, crop, ratio, params), width, height);
+  return { ...features, hue: meanHue(features.meanA, features.meanB), dominant: features.palette[0]?.lab ?? [0, 0, 0] };
 }
 
 /** OKLab → sRGB 8 бит со срезом в охват: так доминанта заливает плитку в режиме 5. */

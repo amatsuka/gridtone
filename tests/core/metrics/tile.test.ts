@@ -4,6 +4,7 @@ import { applyPipeline } from '@core/color/pipeline';
 import type { Rgb } from '@core/color/srgb';
 import { decodeSrgb } from '@core/color/transfer';
 import type { RgbaImage } from '@core/image/sample';
+import { meanHue, tileFeatures } from '@core/metrics/features';
 import { labToSrgb8, metricsWindowSize, tileLab, tileMetrics } from '@core/metrics/tile';
 import { createAdjust, createCrop } from '@core/project/defaults';
 import type { Adjust } from '@core/project/types';
@@ -67,6 +68,19 @@ describe('метрики плитки по окну сетки', () => {
     const m = tileMetrics(image(90, 120, (_, y) => (y < 84 ? ORANGE : TEAL)), createCrop(), '3:4', { photo: createAdjust() });
     expect(labToSrgb8(m.dominant)).toEqual([200, 120, 40]);
     expect(m.palette.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('полные признаки по окну, тон среднего и доминанта — первый цвет палитры', () => {
+    const photo = image(90, 120, (_, y) => (y < 84 ? ORANGE : TEAL));
+    const params = { photo: adjust({ exposure: 0.3 }) };
+    const m = tileMetrics(photo, createCrop(), '3:4', params);
+    const { dominant, hue, ...features } = m;
+    expect(features).toEqual(tileFeatures(tileLab(photo, createCrop(), '3:4', params), 192, 256));
+    expect(hue).toBe(meanHue(m.meanA, m.meanB));
+    expect(dominant).toEqual(m.palette[0]!.lab);
+    expect(m.lHist.reduce((s, v) => s + v, 0)).toBeCloseTo(1, 12);
+    // Граница цветов — единственный край: плотность больше нуля.
+    expect(m.busyness).toBeGreaterThan(0);
   });
 
   it('tileLab — пиксели окна в OKLab', () => {

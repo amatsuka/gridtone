@@ -1,5 +1,6 @@
-// Воркер метрик для режимов 5 и 7 (docs/decisions/0012-view-modes.md): прокси 512 → окно сетки → конвейер
-// core → OKLab → палитра и средние. Сам расчёт — tileMetrics из core; здесь только декодирование и очередь.
+// Воркер метрик для режимов 5 и 7 и вкладки «Анализ» (docs/decisions/0012-view-modes.md, 0018-features-grid-metrics.md):
+// прокси 512 → окно сетки → конвейер core → OKLab → признаки плитки и доминанта. Сам расчёт — tileMetrics
+// из core; здесь только декодирование и очередь. Анализ сетки по готовым признакам — в renderer.
 import type { RgbaImage } from '@core/image/sample';
 import { tileMetrics } from '@core/metrics/tile';
 import type { Lut3D } from '@core/lut/lut3d';

@@ -1151,3 +1151,92 @@ button:disabled {
 .card-legend {
   margin-top: 4px;
 }
+
+/* Вкладка «Анализ» (ADR 0018): карта яркости, ритм, палитра сетки. */
+.luma-map {
+  display: grid;
+  gap: 2px;
+  width: 156px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+
+.luma-cell {
+  aspect-ratio: var(--cell-aspect);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--control);
+}
+
+.luma-cell.empty {
+  background: none;
+  outline: 1px dashed var(--line);
+  outline-offset: -1px;
+}
+
+.luma-cell.published {
+  opacity: 0.75;
+}
+
+.luma-cell.selected {
+  position: relative;
+  box-shadow:
+    inset 0 0 0 2px var(--bg),
+    0 0 0 2px var(--text);
+}
+
+.analysis-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.analysis-stats dt {
+  color: var(--muted);
+}
+
+.analysis-stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.rhythm-fits {
+  margin: 6px 0 0;
+}
+
+.rhythm-fits summary {
+  cursor: default;
+}
+
+.rhythm-fits ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rhythm-fits li {
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+
+.palette-bar {
+  display: flex;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.palette-swatch {
+  flex-basis: 0;
+  min-width: 2px;
+}

@@ -38,14 +38,22 @@ export function pixelWeight(chroma: number): number {
 /** labs — пиксели OKLab подряд (L, a, b). Палитра по убыванию доли. */
 export function palette(labs: Float32Array | Float64Array, k = PALETTE_SIZE): PaletteEntry[] {
   const n = Math.floor(labs.length / 3);
-  if (n === 0) return [];
   const weights = new Float64Array(n);
+  for (let i = 0; i < n; i++) weights[i] = pixelWeight(Math.hypot(labs[i * 3 + 1] as number, labs[i * 3 + 2] as number));
+  return weightedPalette(labs, weights, k);
+}
+
+/**
+ * k-means по точкам OKLab с заданными весами: детерминированный старт, слияние кластеров ближе
+ * PALETTE_MERGE_DISTANCE. Доля цвета — вес его кластера от общего. Палитра по убыванию доли.
+ * Палитра плитки берёт вес пикселя по хроме, палитра сетки — доли цветов в палитрах плиток.
+ */
+export function weightedPalette(labs: Float32Array | Float64Array, weights: Float64Array, k: number): PaletteEntry[] {
+  const n = weights.length;
+  if (n !== Math.floor(labs.length / 3)) throw new Error(`Точек ${Math.floor(labs.length / 3)}, весов ${n}`);
   let total = 0;
-  for (let i = 0; i < n; i++) {
-    const w = pixelWeight(Math.hypot(labs[i * 3 + 1] as number, labs[i * 3 + 2] as number));
-    weights[i] = w;
-    total += w;
-  }
+  for (let i = 0; i < n; i++) total += weights[i] as number;
+  if (n === 0 || !(total > 0)) return [];
 
   const centers = seedCenters(labs, weights, total, k);
   const assignment = new Int32Array(n).fill(-1);

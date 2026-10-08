@@ -1,6 +1,7 @@
-// Метрики плиток для режимов 5 «Доминанты» и 7 «Отклонение» (docs/decisions/0012-view-modes.md).
-// Считает их воркер; здесь — кэш по ассету, кадру, параметрам конвейера и id LUT образа (ADR 0015)
-// и пересчёт через 150 мс после правки.
+// Метрики плиток для режимов 5 «Доминанты» и 7 «Отклонение» (docs/decisions/0012-view-modes.md) и вкладки
+// «Анализ» (docs/decisions/0018-features-grid-metrics.md): признаки плитки целиком, тон среднего и доминанта.
+// Считает их воркер; здесь — кэш по ассету, кадру, параметрам конвейера и id LUT образа (ADR 0015),
+// пересчёт через 150 мс после правки и ход «посчитано N из M».
 // Метрики — производные данные: в проект и в историю они не попадают.
 import { create } from 'zustand';
 import type { PipelineParams } from '@core/color/bake';
@@ -9,26 +10,29 @@ import { createAdjust } from '@core/project/defaults';
 import { proxyUrl } from '@shared/cache';
 import type { ViewMode } from '@shared/view';
 import { lookLut, useLutStore } from './luts';
-import { useAppStore } from './store';
+import { useAppStore, type InspectorTab } from './store';
 import type { MetricsRequest, MetricsResponse, WorkerLut } from './workers/protocol';
 
 const DEBOUNCE_MS = 150;
-/** Результатов в кэше: несколько сотен байт каждый. */
+/** Результатов в кэше: около килобайта каждый (признаки с гистограммами и палитрой). */
 const CACHE_LIMIT = 2000;
 const NEUTRAL = createAdjust();
 
 interface MetricsState {
   /** Метрики по id слота. Пока новые считаются, у слота остаются прежние. */
   bySlot: Readonly<Record<string, TileMetrics>>;
+  /** Плиток, чьи метрики нужны сейчас (с готовым прокси), и сколько из них уже посчитано для текущих правок. */
+  progress: { done: number; total: number };
 }
 
-export const useMetricsStore = create<MetricsState>()(() => ({ bySlot: {} }));
+export const useMetricsStore = create<MetricsState>()(() => ({ bySlot: {}, progress: { done: 0, total: 0 } }));
 
-export function needsMetrics(mode: ViewMode): boolean {
-  return mode === 'dominant' || mode === 'deviation';
+/** Метрики нужны режимам 5 и 7 и открытой вкладке «Анализ». */
+export function needsMetrics({ viewMode, inspectorTab }: { viewMode: ViewMode; inspectorTab: InspectorTab }): boolean {
+  return viewMode === 'dominant' || viewMode === 'deviation' || inspectorTab === 'analysis';
 }
 
-/** Подписывается на проект и режим просмотра. Воркер создаётся при первом входе в режим 5 или 7. */
+/** Подписывается на проект, режим просмотра и вкладку. Воркер создаётся, когда метрики понадобились впервые. */
 export function connectMetrics(): () => void {
   let worker: Worker | null = null;
   /** LUT, уже присланные текущему воркеру. */
@@ -44,11 +48,14 @@ export function connectMetrics(): () => void {
     frame = 0;
     const previous = useMetricsStore.getState().bySlot;
     const bySlot: Record<string, TileMetrics> = {};
+    let done = 0;
     for (const [slotId, key] of wanted) {
-      const metrics = cache.get(key) ?? previous[slotId];
+      const fresh = cache.get(key);
+      if (fresh) done++;
+      const metrics = fresh ?? previous[slotId];
       if (metrics) bySlot[slotId] = metrics;
     }
-    useMetricsStore.setState({ bySlot });
+    useMetricsStore.setState({ bySlot, progress: { done, total: wanted.size } });
   };
   // Ответы воркера приходят по одному: в стор они уходят не чаще раза в кадр.
   const publishSoon = () => {
@@ -80,8 +87,9 @@ export function connectMetrics(): () => void {
 
   const run = () => {
     timer = undefined;
-    const { snapshot, viewMode, showOriginal } = useAppStore.getState();
-    if (!snapshot || !needsMetrics(viewMode)) return;
+    const state = useAppStore.getState();
+    const { snapshot, showOriginal } = state;
+    if (!snapshot || !needsMetrics(state)) return;
     const { project, assets } = snapshot;
     const ratio = project.grid.ratio;
     const looks = new Map(project.looks.map((look) => [look.id, look]));
@@ -131,9 +139,9 @@ export function connectMetrics(): () => void {
   };
 
   const unsubscribe = useAppStore.subscribe((state, prev) => {
-    if (!needsMetrics(state.viewMode)) return;
-    if (state.viewMode !== prev.viewMode || state.showOriginal !== prev.showOriginal) {
-      // Вход в режим и до/после — сразу: обычно всё уже в кэше.
+    if (!needsMetrics(state)) return;
+    if (state.viewMode !== prev.viewMode || state.inspectorTab !== prev.inspectorTab || state.showOriginal !== prev.showOriginal) {
+      // Вход в режим, на вкладку «Анализ» и до/после — сразу: обычно всё уже в кэше.
       clearTimeout(timer);
       run();
     } else if (state.snapshot !== prev.snapshot) {
@@ -143,7 +151,7 @@ export function connectMetrics(): () => void {
   });
   // Таблица LUT пришла из main: плитки с этим образом теперь можно посчитать.
   const unsubscribeLuts = useLutStore.subscribe(() => {
-    if (!needsMetrics(useAppStore.getState().viewMode)) return;
+    if (!needsMetrics(useAppStore.getState())) return;
     clearTimeout(timer);
     run();
   });

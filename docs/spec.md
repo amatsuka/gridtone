@@ -142,7 +142,9 @@ interface Features {
   hueHist: number[];             // 12 корзин по 30°, вес = хрома
   palette: { lab: Vec3; share: number }[]; // k-means, k = 5
   neutralShare: number;          // доля пикселей с хромой < 0.03
-  busyness: number;              // энергия краёв по Собелю
+  highKeyShare: number;          // доля пикселей с L > 0.8 — высокий ключ
+  lowKeyShare: number;           // доля пикселей с L < 0.3 — низкий ключ
+  busyness: number;              // энергия краёв по Собелю: средний модуль градиента L на точку окна
 }
 
 interface Candidate { assetId: string; score: number; parts: { L: number; hue: number; chroma: number; palette: number; penalty: number } }

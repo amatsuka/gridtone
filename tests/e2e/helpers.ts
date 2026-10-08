@@ -2,6 +2,7 @@
 import { join } from 'node:path';
 import { _electron as electron, expect, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import sharp from 'sharp';
+import type { RgbaImage } from '../../src/core/image/sample';
 import type { Project } from '../../src/core/project/types';
 
 export const ROOT = join(__dirname, '../..');
@@ -102,4 +103,13 @@ export async function backgroundColor(locator: Locator): Promise<{ r: number; g:
   });
   const [r = NaN, g = NaN, b = NaN] = (css.match(/\d+(\.\d+)?/g) ?? []).map(Number);
   return { r, g, b };
+}
+
+/** Прокси 512 так, как его читает core (`RgbaImage`, RGBA 8 бит): по нему e2e сверяет метрики воркера с core. */
+export async function readProxyImage(projectDir: string, assetId: string): Promise<RgbaImage> {
+  const { data, info } = await sharp(join(projectDir, 'cache', 'proxies', assetId, '512.jpg'))
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return { width: info.width, height: info.height, data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength) };
 }

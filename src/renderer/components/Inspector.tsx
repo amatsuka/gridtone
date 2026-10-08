@@ -22,13 +22,18 @@ import {
 import { useLookLut } from '../luts';
 import { useAppStore, type InspectorTab } from '../store';
 import { AdjustPanel } from './AdjustPanel';
+import { AnalysisPanel } from './AnalysisPanel';
 
 const TABS: { id: InspectorTab; label: string }[] = [
   { id: 'photo', label: 'Фото' },
   { id: 'look', label: 'Образ' },
+  { id: 'analysis', label: 'Анализ' },
 ];
 
-/** Правая панель: поправка основной плитки и образы проекта (spec, «Коррекция в два уровня»). */
+/**
+ * Правая панель: поправка основной плитки и образы проекта (spec, «Коррекция в два уровня»),
+ * анализ сетки (spec, модуль 3).
+ */
 export function Inspector() {
   const tab = useAppStore((state) => state.inspectorTab);
   const project = useAppStore((state) => state.snapshot?.project);
@@ -47,8 +52,10 @@ export function Inspector() {
       {project &&
         (tab === 'photo' ? (
           <PhotoTab slot={primary} selectedCount={selection.ids.length} />
-        ) : (
+        ) : tab === 'look' ? (
           <LookTab project={project} primary={primary} selectedIds={selection.ids} />
+        ) : (
+          <AnalysisPanel project={project} />
         ))}
     </aside>
   );

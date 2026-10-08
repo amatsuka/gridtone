@@ -35,6 +35,12 @@ export function clickTile(slotId: string, mode: 'replace' | 'toggle' | 'range'):
   useAppStore.setState({ selection: next, activeLookId: lookId ?? activeLookId });
 }
 
+/** Клик по клетке карты яркости во вкладке «Анализ»: то же выделение, и сетка прокручивается к плитке. */
+export function clickTileInAnalysis(slotId: string, mode: 'replace' | 'toggle' | 'range'): void {
+  clickTile(slotId, mode);
+  scrollToTile(slotId);
+}
+
 export function selectAllTiles(): void {
   useAppStore.setState((state) => ({ selection: selectAll(state.selection, order()) }));
 }

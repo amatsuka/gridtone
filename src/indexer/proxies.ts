@@ -24,6 +24,9 @@ const FORMATS: Partial<Record<string, ImageFormat>> = { jpeg: 'jpeg', png: 'png'
 /** inside — длинная сторона = размер (редактор видит весь кадр); outside — короткая сторона = размер (окно 3:4 в плитке). */
 const PROXY_FIT: Record<ProxySize, 'inside' | 'outside'> = { 2048: 'inside', 512: 'outside' };
 
+/** Номер временного файла прокси в этом процессе. */
+let tmpSeq = 0;
+
 /**
  * Хэширует оригинал и строит недостающие прокси в cache/.
  * Прокси пишутся через временный файл и rename: под итоговым именем всегда лежит целый файл.
@@ -51,7 +54,9 @@ export async function indexFile(item: IndexItem, cacheDir: string): Promise<Inde
     if (await exists(file)) continue;
     const data = await renderProxy(item.path, size);
     await mkdir(dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
+    // Свой временный файл на каждую запись: одинаковые фото в одном импорте строят один и тот же прокси
+    // параллельно, и общий .tmp один из них переименовал бы из-под другого (ENOENT).
+    const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
     await writeFile(tmp, data);
     await rename(tmp, file);
   }

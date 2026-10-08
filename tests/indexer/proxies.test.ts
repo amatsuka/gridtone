@@ -138,6 +138,18 @@ describe('идентичность и кэш', () => {
     expect((await stat(proxy(2048))).mtimeMs).toBe(before);
   });
 
+  test('одинаковые фото в одном импорте индексируются параллельно без гонки за прокси', async () => {
+    // Два файла с одним содержимым строят один и тот же прокси одновременно: раньше общий .tmp
+    // переименовывал один из них из-под другого, и второй падал с ENOENT.
+    const file = await writeFixture(photos, spec({ name: 'twin-a', color: { r: 30, g: 140, b: 150 } }));
+    const twin = join(photos, 'twin-b.jpg');
+    await writeFile(twin, await readFile(file));
+    const assets = await Promise.all([file, twin, file, twin].map((path) => indexFile({ path }, cache)));
+    expect(new Set(assets.map((asset) => asset.id)).size).toBe(1);
+    const proxy = join(cache, proxyRelPath(assets[0]!.id, 512));
+    expect(await size(proxy)).toEqual([512, 683]);
+  });
+
   test('изменившийся оригинал не пересобирается', async () => {
     const file = await writeFixture(photos, spec({ name: 'changed' }));
     const err = await indexFile({ path: file, expectHash: '0'.repeat(64) }, cache).catch((e: unknown) => e);

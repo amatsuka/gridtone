@@ -12,7 +12,8 @@ export const api = window.gridtone;
 
 enablePatches();
 
-export type InspectorTab = 'photo' | 'look';
+/** Вкладки инспектора: поправка фото, образы и анализ сетки (ADR 0018). */
+export type InspectorTab = 'photo' | 'look' | 'analysis';
 export type EditorTab = 'color' | 'crop';
 
 /** Скопированные правки: коррекция основной плитки на момент копирования и выбранные группы. */

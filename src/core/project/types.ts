@@ -1,6 +1,6 @@
 // Модель данных проекта — docs/spec.md, «Модель данных».
 // Отступления от спеки: Project.assets (docs/decisions/0003-assets-in-project.md),
-// Project.luts (docs/decisions/0015-lut-import.md).
+// Project.luts (docs/decisions/0015-lut-import.md), доли ключа в Features (docs/decisions/0018-features-grid-metrics.md).
 
 export type Ratio = '3:4' | '1:1';
 export type Vec3 = [number, number, number]; // OKLab: L 0..1, a, b
@@ -123,7 +123,9 @@ export interface Features {
   hueHist: number[]; // 12 корзин по 30°, вес = хрома
   palette: { lab: Vec3; share: number }[]; // k-means, k = 5
   neutralShare: number; // доля пикселей с хромой < 0.03
-  busyness: number; // энергия краёв по Собелю
+  highKeyShare: number; // доля пикселей с L > 0.8 — высокий ключ (ADR 0018)
+  lowKeyShare: number; // доля пикселей с L < 0.3 — низкий ключ
+  busyness: number; // энергия краёв по Собелю: средний модуль градиента L на точку окна
 }
 
 export interface Candidate {
