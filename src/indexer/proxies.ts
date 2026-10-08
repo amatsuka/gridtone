@@ -70,9 +70,10 @@ export async function indexFile(item: IndexItem, cacheDir: string): Promise<Inde
 /**
  * Рецепт цвета прокси без уменьшения: EXIF-поворот и перевод в sRGB по встроенному ICC.
  * pipelineColourspace('srgb') обязателен: без него 16-битные файлы получают неверный цвет
- * (docs/decisions/0004-proxies.md). Им же читаются возвращённая калибровочная карта и, на этапе 3г, оригиналы.
+ * (docs/decisions/0004-proxies.md). Им же читаются возвращённая калибровочная карта и оригиналы
+ * для экспорта постов (ADR 0016, 0017). Конвейер sharp при этом 8-битный: 16 бит входа сводятся к 8.
  */
-export function decodeSrgb(src: string): Sharp {
+export function decodeSrgb(src: string | Buffer): Sharp {
   return sharp(src, { failOn: 'error' }).autoOrient().pipelineColourspace('srgb');
 }
 

@@ -4,6 +4,8 @@ const MAX_LENGTH = 100;
 
 /** Калибровочная карта в подпапке экспорта (docs/decisions/0016-calibration-card.md): `Калибровка.png`. */
 export const CARD_FILE_BASE = 'Калибровка';
+/** Сетка целиком (docs/decisions/0017-post-export.md): `Сетка.png`. */
+export const GRID_FILE_BASE = 'Сетка';
 /** Запрещены в именах файлов Windows; «/» и «:» — ещё и на macOS. */
 const FORBIDDEN = /[/\\:*?"<>|]/g;
 const CONTROL = /[\u0000-\u001f\u007f]+/g;
@@ -27,6 +29,13 @@ export function uniqueNames(names: readonly string[]): string[] {
     used.add(candidate.toLocaleLowerCase());
     return candidate;
   });
+}
+
+/** Имя файла без папки и расширения; разделители папок — и «/», и «\»: путь мог прийти с Windows. */
+export function fileStem(path: string): string {
+  const name = path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) : name;
 }
 
 const pad = (v: number) => String(v).padStart(2, '0');

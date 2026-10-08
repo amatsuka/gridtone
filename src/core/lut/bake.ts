@@ -21,3 +21,12 @@ export function bakeLut(params: PipelineParams, size: number, title?: string): L
 export function lookPipeline(look: Adjust, lut?: Lut3D): PipelineParams {
   return lut ? { photo: createAdjust(), look, lut } : { photo: createAdjust(), look };
 }
+
+/**
+ * Параметры поста — то, что видно на его плитке: поправка фото, образ и LUT образа (шаг 9). Так
+ * считаются пост, плитка `Сетка.png` и LUT на каждый пост (docs/decisions/0017-post-export.md).
+ */
+export function postPipeline(photo: Adjust, look?: Adjust, lut?: Lut3D): PipelineParams {
+  if (!look) return { photo };
+  return lut ? { photo, look, lut } : { photo, look };
+}

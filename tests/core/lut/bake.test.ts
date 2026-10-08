@@ -3,7 +3,8 @@ import { bakePipeline } from '@core/color/bake';
 import { applyBaked, applyPass } from '@core/color/pipeline';
 import { bakeAdjust } from '@core/color/bake';
 import type { Rgb } from '@core/color/srgb';
-import { bakeLut, lookPipeline } from '@core/lut/bake';
+import { bakeLut, lookPipeline, postPipeline } from '@core/lut/bake';
+import { identityLut } from '@core/lut/lut3d';
 import { lutIndex, sampleLut } from '@core/lut/lut3d';
 import { createAdjust } from '@core/project/defaults';
 import { randomAdjust } from '../../golden/cases';
@@ -46,6 +47,22 @@ describe('запекание LUT', () => {
     const node: Rgb = [0.25, 0.75, 1];
     const i = lutIndex(5, 1, 3, 4);
     expect([lut.data[i], lut.data[i + 1], lut.data[i + 2]]).toEqual(applyPass(node, pass));
+  });
+
+  it('LUT поста — связка «поправка фото + образ» с LUT образа; без образа — только поправка', () => {
+    const random = seededRandom(11);
+    const photo = randomAdjust(random);
+    const look = randomAdjust(random);
+    const lut = identityLut(3);
+    expect(postPipeline(photo)).toEqual({ photo });
+    expect(postPipeline(photo, look)).toEqual({ photo, look });
+    expect(postPipeline(photo, look, lut)).toEqual({ photo, look, lut });
+    // LUT без образа не бывает: шаг 9 — часть прохода образа.
+    expect(postPipeline(photo, undefined, lut)).toEqual({ photo });
+    const node: Rgb = [0.5, 0.25, 0.75];
+    const i = lutIndex(5, 2, 1, 3);
+    const baked = bakeLut(postPipeline(photo, look), 5);
+    expect([baked.data[i], baked.data[i + 1], baked.data[i + 2]]).toEqual(applyPass(applyPass(node, bakeAdjust(photo)), bakeAdjust(look)));
   });
 
   it('LUT 33 повторяет конвейер между узлами с малой ошибкой', () => {

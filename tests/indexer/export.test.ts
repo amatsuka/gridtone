@@ -24,7 +24,7 @@ function item(fileBase: string, patch: Partial<LutExportItem> = {}): LutExportIt
 
 async function run(dir: string, items: LutExportItem[], cardFile: string | null = null): Promise<IndexerResponse[]> {
   const messages: IndexerResponse[] = [];
-  await runExport({ type: 'export', jobId: 'job', dir, cardFile, luts: items }, (m) => messages.push(m));
+  await runExport({ type: 'export', jobId: 'job', dir, cardFile, luts: items, posts: [], grid: null }, (m) => messages.push(m));
   return messages;
 }
 
@@ -34,7 +34,7 @@ describe('экспорт LUT в utility process', () => {
     await mkdir(dir);
     const items = [item('Плёнка'), item('Излом', { size: 65, hald: false, title: 'Излом "крутой"' })];
     const messages = await run(dir, items);
-    expect(exportFiles({ cardFile: null, luts: items })).toEqual(['Плёнка.cube', 'Плёнка.png', 'Излом.cube']);
+    expect(exportFiles({ cardFile: null, luts: items, posts: [], grid: null })).toEqual(['Плёнка.cube', 'Плёнка.png', 'Излом.cube']);
     expect(messages).toEqual([
       { type: 'file', jobId: 'job', file: 'Плёнка.cube', ok: true },
       { type: 'file', jobId: 'job', file: 'Плёнка.png', ok: true },
@@ -66,7 +66,7 @@ describe('экспорт LUT в utility process', () => {
     const dir = join(root, 'card');
     await mkdir(dir);
     const items = [item('Калибровка 2', { hald: false })];
-    expect(exportFiles({ cardFile: 'Калибровка.png', luts: items })).toEqual(['Калибровка.png', 'Калибровка 2.cube']);
+    expect(exportFiles({ cardFile: 'Калибровка.png', luts: items, posts: [], grid: null })).toEqual(['Калибровка.png', 'Калибровка 2.cube']);
     expect((await run(dir, items, 'Калибровка.png')).map((m) => (m.type === 'file' ? m.file : m.type))).toEqual([
       'Калибровка.png',
       'Калибровка 2.cube',

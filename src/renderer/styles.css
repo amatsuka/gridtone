@@ -951,7 +951,7 @@ button:disabled {
   text-align: right;
 }
 
-/* ─── Экспорт (ADR 0014) ──────────────────────────────────────────────────── */
+/* ─── Экспорт (ADR 0014, 0017) ────────────────────────────────────────────── */
 
 .export-dialog {
   width: 560px;
@@ -1071,6 +1071,16 @@ button:disabled {
 .export-error {
   color: var(--danger);
   font-size: 12px;
+}
+
+.export-warning {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.export-progress {
+  width: 100%;
+  margin: 2px 0 6px;
 }
 
 /* ─── Калибровочная карта (ADR 0016) ──────────────────────────────────────── */

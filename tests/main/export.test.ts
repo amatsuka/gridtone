@@ -2,9 +2,9 @@ import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { lookPipeline } from '@core/lut/bake';
+import { lookPipeline, postPipeline } from '@core/lut/bake';
 import { identityLut, type Lut3D } from '@core/lut/lut3d';
-import { createAdjust, createProject } from '@core/project/defaults';
+import { createAdjust, createProject, createSlot } from '@core/project/defaults';
 import type { Project } from '@core/project/types';
 import type { CardReport } from '@core/lut/calibration';
 import type { CardCheckJob, ExportJob, ExportProgress, IndexerResponse } from '@shared/ipc';
@@ -162,7 +162,7 @@ describe('ExportService', () => {
     expect(job.dir).toBe(first.dir);
     expect(job.cardFile).toBeNull();
     expect(job.luts.map((i) => i.fileBase)).toEqual(['Плёнка']);
-    expect(progress.at(-1)).toEqual({ jobId: first.jobId, dir: first.dir, total: 2, done: 0, files: [], errors: [], finished: false });
+    expect(progress.at(-1)).toEqual({ jobId: first.jobId, dir: first.dir, total: 2, done: 0, files: [], errors: [], warnings: [], finished: false });
 
     reply({ type: 'file', jobId: first.jobId, file: 'Плёнка.cube', ok: true });
     reply({ type: 'file', jobId: first.jobId, file: 'Плёнка.png', ok: false, error: 'диск полон' });
@@ -174,6 +174,7 @@ describe('ExportService', () => {
       done: 2,
       files: ['Плёнка.cube'],
       errors: [{ file: 'Плёнка.png', message: 'диск полон' }],
+      warnings: [],
       finished: true,
     });
 
@@ -189,7 +190,7 @@ describe('калибровочная карта (ADR 0016)', () => {
     const port = new FakePort();
     const progress: ExportProgress[] = [];
     const service = new ExportService(port, (p) => progress.push(p));
-    expect(await service.plan(project(), { dir: '/p', card: true })).toEqual({ cardFile: 'Калибровка.png', luts: [] });
+    expect(await service.plan(project(), { dir: '/p', card: true })).toEqual({ cardFile: 'Калибровка.png', luts: [], posts: [], grid: null });
     await expect(service.plan(project(), { dir: '/p', card: false })).rejects.toThrow(/Нечего/);
 
     const started = await service.start(root, project(), { dir: '/p', card: true });
@@ -235,5 +236,126 @@ describe('калибровочная карта (ADR 0016)', () => {
     expect(() => parseCalibrationRequest({ dir: '/p' })).toThrow();
     expect(() => parseCalibrationRequest({ dir: 1, lookId: 'a' })).toThrow();
     expect(() => parseCalibrationRequest(null)).toThrow();
+  });
+});
+
+describe('посты и сетка (ADR 0017)', () => {
+  const LUT_ID = 'aaaaaaaaaaaaaaaa';
+  /** Три плитки: полосы (опубликован), однотонное с образом «Плёнка» и LUT, рампа; позиция без фото. */
+  function grid(): Project {
+    const p = project();
+    p.luts[LUT_ID] = { id: LUT_ID, name: 'сепия.cube', size: 3, hash: LUT_ID.padEnd(64, '0'), importedAt: '2026-10-08T00:00:00.000Z' };
+    p.looks[0]!.importedLut = LUT_ID;
+    for (const [id, name] of [
+      ['1111111111111111', '/фото/полосы.jpg'],
+      ['2222222222222222', '/фото/однотонное.jpg'],
+      ['3333333333333333', 'C:\\фото\\рампа.tif'],
+    ] as const) {
+      p.assets[id] = { id, path: name, hash: id.padEnd(64, 'f'), w: 1200, h: 1600, format: 'jpeg', icc: 'embedded', importedAt: '' };
+    }
+    p.slots = [
+      { ...createSlot('s1', '1111111111111111'), state: 'published' },
+      { ...createSlot('s2', '2222222222222222'), lookId: 'a', adjust: { ...createAdjust(), exposure: 0.5 } },
+      createSlot('s3', '3333333333333333'),
+      createSlot('s4'),
+    ];
+    return p;
+  }
+  const lut = identityLut(3);
+  const luts = { loadLut: async () => lut };
+
+  test('запрос: посты, сетка и LUT постов — флаги', () => {
+    expect(parseExportRequest({ dir: '/p', posts: true, grid: false, postLuts: true })).toEqual({ dir: '/p', posts: true, grid: false, postLuts: true });
+    expect(() => parseExportRequest({ dir: '/p', posts: 1 })).toThrow(/постов/);
+    expect(() => parseExportRequest({ dir: '/p', grid: 'да' })).toThrow(/сетки/);
+    expect(() => parseExportRequest({ dir: '/p', postLuts: null })).toThrow(/LUT постов/);
+  });
+
+  test('посты — в порядке публикации снизу вверх, опубликованные и пустые пропущены; параметры — плитки', async () => {
+    const p = grid();
+    const service = new ExportService(new FakePort(), () => {}, { luts });
+    const plan = await service.plan(p, { dir: '/проект', posts: true, postLuts: true });
+    expect(plan.posts.map((item) => [item.fileBase, item.source.path, item.jpeg, item.cube])).toEqual([
+      ['1 — рампа', 'C:\\фото\\рампа.tif', true, true],
+      ['2 — однотонное', '/фото/однотонное.jpg', true, true],
+    ]);
+    expect(plan.posts[0]?.source.hash).toBe('3333333333333333'.padEnd(64, 'f'));
+    expect(plan.posts[0]?.params).toEqual({ photo: createAdjust() });
+    // Образ плитки вместе с его LUT: LUT загружается, хотя раздел LUT не выбран.
+    expect(plan.posts[1]?.params).toEqual(postPipeline({ ...createAdjust(), exposure: 0.5 }, p.looks[0]!.adjust, lut));
+    expect(plan.posts[1]?.crop).toEqual(p.slots[1]!.crop);
+    expect(plan.grid).toBeNull();
+    expect((await service.plan(p, { dir: '/p', postLuts: true })).posts.map((item) => [item.jpeg, item.cube])).toEqual([
+      [false, true],
+      [false, true],
+    ]);
+  });
+
+  test('сетка — все позиции по порядку, пустая — null, запасной источник — прокси 2048', async () => {
+    const p = grid();
+    const plan = await new ExportService(new FakePort(), () => {}, { luts }).plan(p, { dir: '/проект', grid: true });
+    expect(plan.posts).toEqual([]);
+    const item = plan.grid!;
+    expect([item.file, item.ratio, item.columns, item.tiles.length]).toEqual(['Сетка.png', '3:4', 3, 4]);
+    expect(item.tiles[3]).toBeNull();
+    expect(item.tiles[0]).toMatchObject({
+      label: 'плитка 1 (полосы)',
+      source: { path: '/фото/полосы.jpg' },
+      fallback: join('/проект', 'cache', 'proxies', '1111111111111111', '2048.jpg'),
+    });
+    expect(item.tiles[1]?.params).toEqual(postPipeline({ ...createAdjust(), exposure: 0.5 }, p.looks[0]!.adjust, lut));
+  });
+
+  test('имена в подпапке не сталкиваются: карта, сетка, LUT образов и посты', async () => {
+    const p = grid();
+    p.looks[1]!.name = 'сетка';
+    p.looks[2]!.name = '1 — рампа';
+    const plan = await new ExportService(new FakePort(), () => {}, { luts }).plan(p, {
+      dir: '/p',
+      card: true,
+      grid: true,
+      posts: true,
+      lut: { looks: [{ id: 'b', size: 33 }, { id: 'c', size: 33 }], cube: true, hald: true },
+    });
+    expect(plan.cardFile).toBe('Калибровка.png');
+    expect(plan.grid?.file).toBe('Сетка.png');
+    expect(plan.luts.map((i) => i.fileBase)).toEqual(['сетка 2', '1 — рампа']);
+    expect(plan.posts.map((i) => i.fileBase)).toEqual(['1 — рампа 2', '2 — однотонное']);
+  });
+
+  test('публиковать нечего, сетка пуста, копия LUT плитки пропала — ошибка до диалога', async () => {
+    const p = grid();
+    const service = new ExportService(new FakePort(), () => {}, { luts });
+    const published = grid();
+    for (const slot of published.slots) slot.state = slot.assetId ? 'published' : 'empty';
+    await expect(service.plan(published, { dir: '/p', posts: true })).rejects.toThrow(/нет постов/);
+    expect((await service.plan(published, { dir: '/p', grid: true })).grid?.tiles).toHaveLength(4);
+    const empty = project();
+    await expect(service.plan(empty, { dir: '/p', grid: true })).rejects.toThrow(/нет плиток/);
+    const broken = new ExportService(new FakePort(), () => {}, { luts: { loadLut: () => Promise.reject(new Error('LUT «сепия.cube»: файла нет')) } });
+    await expect(broken.plan(p, { dir: '/p', posts: true })).rejects.toThrow(/сепия/);
+    await expect(broken.plan(p, { dir: '/p', grid: true })).rejects.toThrow(/сепия/);
+    // LUT образа нужен только плиткам с фото: без них экспорт LUT другого образа идёт.
+    p.slots[1]!.lookId = 'b';
+    expect((await broken.plan(p, { dir: '/p', posts: true })).posts).toHaveLength(2);
+  });
+
+  test('ход: файлы постов и сетки в счёте, оговорки — отдельным списком', async () => {
+    const port = new FakePort();
+    const progress: ExportProgress[] = [];
+    const service = new ExportService(port, (p) => progress.push(p), { luts });
+    const started = await service.start(root, grid(), { dir: '/p', posts: true, postLuts: true, grid: true });
+    expect(progress.at(-1)?.total).toBe(5);
+    const { job, reply } = port.jobs[0]!;
+    expect(job.posts).toHaveLength(2);
+    expect(job.grid?.tiles).toHaveLength(4);
+    reply({ type: 'file', jobId: started.jobId, file: '1 — рампа.jpg', ok: false, error: 'оригинал не найден: C:\\фото\\рампа.tif' });
+    reply({ type: 'file', jobId: started.jobId, file: 'Сетка.png', ok: true, warnings: ['плитка 3 (рампа): из превью'] });
+    expect(progress.at(-1)).toMatchObject({
+      done: 2,
+      files: ['Сетка.png'],
+      errors: [{ file: '1 — рампа.jpg', message: 'оригинал не найден: C:\\фото\\рампа.tif' }],
+      warnings: [{ file: 'Сетка.png', message: 'плитка 3 (рампа): из превью' }],
+    });
   });
 });

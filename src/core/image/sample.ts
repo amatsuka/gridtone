@@ -1,14 +1,39 @@
-// Окно сетки из прокси для метрик (docs/decisions/0012-view-modes.md): та же геометрия, что у плитки
-// в шейдере (src/core/project/crop.ts), но уменьшенная до размера метрик. Каждая точка — среднее
+// Окно изображения по матрице crop.ts: для метрик (docs/decisions/0012-view-modes.md) — из прокси 512,
+// для экспорта постов и сетки (docs/decisions/0017-post-export.md) — из предуменьшенного оригинала.
+// Та же геометрия, что у плитки в шейдере (src/core/project/crop.ts). Каждая точка — среднее
 // supersample² билинейных выборок по своей ячейке, так уменьшение не даёт муара.
 // Значения усредняются в гамма-кодированном sRGB, как фильтрация 8-битной текстуры на GPU.
 import { applyAffine, type Affine } from '../project/crop';
 
-/** Изображение RGBA 8 бит, строки сверху вниз. */
+/** Изображение 8 бит, строки сверху вниз: RGBA, как ImageData, или RGB, как raw из sharp. */
 export interface RgbaImage {
   width: number;
   height: number;
   data: Uint8Array | Uint8ClampedArray;
+  /** Каналов на точку, первые три — RGB. По умолчанию 4. */
+  channels?: 3 | 4;
+}
+
+/** Больше выборок на ось не берётся: столько не нужно даже окну из прокси без предуменьшения. */
+const MAX_SUPERSAMPLE = 8;
+/** Ячейка, больше точки изображения меньше чем на эту долю, считается равной ей: ошибки округления размеров. */
+const SCALE_SLACK = 0.01;
+/** Выборка ближе этого к центру пикселя (в долях пикселя) берёт сам пиксель: тождественное окно — бит в бит. */
+const SNAP = 1e-6;
+
+/**
+ * Сторона ячейки выхода в точках изображения, по большей оси: во сколько раз окно уменьшается
+ * (больше 1) или увеличивается (меньше 1). Длина стороны от поворота не зависит.
+ */
+export function windowScale(transform: Affine, imageWidth: number, imageHeight: number, width: number, height: number): number {
+  const su = Math.hypot(transform[0] * imageWidth, transform[3] * imageHeight) / width;
+  const sv = Math.hypot(transform[1] * imageWidth, transform[4] * imageHeight) / height;
+  return Math.max(su, sv);
+}
+
+/** Выборок на точку по каждой оси при масштабе scale: шаг между ними не больше точки изображения. */
+export function supersampleFor(scale: number): number {
+  return Math.min(MAX_SUPERSAMPLE, Math.max(1, Math.ceil(scale - SCALE_SLACK)));
 }
 
 /**
@@ -46,21 +71,28 @@ export function sampleWindow(image: RgbaImage, transform: Affine, width: number,
   return out;
 }
 
+/** Ближайшее целое, если до него меньше SNAP: (x + 0.5) / w · w − 0.5 в плавающей точке не всегда равно x. */
+function snap(p: number): number {
+  const r = Math.round(p);
+  return Math.abs(p - r) < SNAP ? r : p;
+}
+
 /** Билинейная выборка в пиксельных координатах (центр пикселя — целое число), края повторяются. */
 function bilinear(image: RgbaImage, px: number, py: number, out: number[]): void {
   const { width, height, data } = image;
-  const fx = Math.min(width - 1, Math.max(0, px));
-  const fy = Math.min(height - 1, Math.max(0, py));
+  const channels = image.channels ?? 4;
+  const fx = Math.min(width - 1, Math.max(0, snap(px)));
+  const fy = Math.min(height - 1, Math.max(0, snap(py)));
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);
   const x1 = Math.min(width - 1, x0 + 1);
   const y1 = Math.min(height - 1, y0 + 1);
   const tx = fx - x0;
   const ty = fy - y0;
-  const i00 = (y0 * width + x0) * 4;
-  const i10 = (y0 * width + x1) * 4;
-  const i01 = (y1 * width + x0) * 4;
-  const i11 = (y1 * width + x1) * 4;
+  const i00 = (y0 * width + x0) * channels;
+  const i10 = (y0 * width + x1) * channels;
+  const i01 = (y1 * width + x0) * channels;
+  const i11 = (y1 * width + x1) * channels;
   for (let c = 0; c < 3; c++) {
     const a = data[i00 + c] as number;
     const b = data[i10 + c] as number;

@@ -1,6 +1,6 @@
-// Экспорт в utility process (docs/decisions/0014-lut-export.md, 0016-calibration-card.md): запекание
-// 33³–65³ и PNG через sharp не подвешивают ни main, ни интерфейс. Папку задачи создаёт main; файлы
-// пишутся с флагом wx — существующий файл не перезаписывается никогда.
+// Экспорт в utility process (docs/decisions/0014-lut-export.md, 0016-calibration-card.md, 0017-post-export.md):
+// запекание 33³–65³, PNG через sharp, посты и сетка из оригиналов не подвешивают ни main, ни интерфейс.
+// Папку задачи создаёт main; файлы пишутся с флагом wx — существующий файл не перезаписывается никогда.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -9,20 +9,36 @@ import { lookCubeComments, writeCube } from '@core/lut/cube';
 import { HALD_LEVEL, haldGeometry, lutToHald } from '@core/lut/hald';
 import type { ExportJob, IndexerResponse, LutExportItem } from '@shared/ipc';
 import { cardPng } from './calibration';
+import { gridPng, postCube, postJpeg, type Rendered } from './posts';
 
-/** Имена файлов задачи по порядку записи: карта, затем для каждого образа `.cube` и HaldCLUT. */
-export function exportFiles(job: Pick<ExportJob, 'cardFile' | 'luts'>): string[] {
+type ExportPlan = Pick<ExportJob, 'cardFile' | 'luts' | 'posts' | 'grid'>;
+
+/**
+ * Имена файлов задачи по порядку записи: карта; `.cube` и HaldCLUT каждого образа; посты в порядке
+ * публикации — JPEG и `.cube`; сетка.
+ */
+export function exportFiles(job: ExportPlan): string[] {
   return outputs(job).map(([file]) => file);
 }
 
-type Output = [file: string, render: () => Promise<string | Buffer>];
+type Output = [file: string, render: () => Promise<Rendered>];
 
-function outputs({ cardFile, luts }: Pick<ExportJob, 'cardFile' | 'luts'>): Output[] {
-  const list: Output[] = cardFile === null ? [] : [[cardFile, cardPng]];
+const plain = async (data: string | Buffer | Promise<Buffer>): Promise<Rendered> => ({
+  data: typeof data === 'string' ? Buffer.from(data, 'utf8') : await data,
+  warnings: [],
+});
+
+function outputs({ cardFile, luts, posts, grid }: ExportPlan): Output[] {
+  const list: Output[] = cardFile === null ? [] : [[cardFile, () => plain(cardPng())]];
   for (const item of luts) {
-    if (item.cube) list.push([`${item.fileBase}.cube`, async () => cubeText(item)]);
-    if (item.hald) list.push([`${item.fileBase}.png`, () => haldPng(item)]);
+    if (item.cube) list.push([`${item.fileBase}.cube`, () => plain(cubeText(item))]);
+    if (item.hald) list.push([`${item.fileBase}.png`, () => plain(haldPng(item))]);
   }
+  for (const item of posts) {
+    if (item.jpeg) list.push([`${item.fileBase}.jpg`, () => postJpeg(item)]);
+    if (item.cube) list.push([`${item.fileBase}.cube`, async () => postCube(item)]);
+  }
+  if (grid) list.push([grid.file, () => gridPng(grid)]);
   return list;
 }
 
@@ -44,13 +60,17 @@ export async function haldPng(item: LutExportItem): Promise<Buffer> {
     .toBuffer();
 }
 
-/** Пишет файлы задачи по одному и сообщает о каждом. Ошибка одного файла не останавливает остальные. */
+/**
+ * Пишет файлы задачи по одному и сообщает о каждом. Ошибка одного файла — пост без оригинала, занятое
+ * имя — не останавливает остальные.
+ */
 export async function runExport(job: ExportJob, post: (message: IndexerResponse) => void): Promise<void> {
   const { jobId, dir } = job;
   for (const [file, render] of outputs(job)) {
     try {
-      await writeFile(join(dir, file), await render(), { flag: 'wx' });
-      post({ type: 'file', jobId, file, ok: true });
+      const { data, warnings } = await render();
+      await writeFile(join(dir, file), data, { flag: 'wx' });
+      post({ type: 'file', jobId, file, ok: true, ...(warnings.length > 0 ? { warnings } : {}) });
     } catch (err) {
       post({ type: 'file', jobId, file, ok: false, error: err instanceof Error ? err.message : String(err) });
     }

@@ -1,5 +1,5 @@
-// Точка входа utility process: принимает задачи от main — строит прокси, экспортирует LUT и калибровочную
-// карту, проверяет возвращённую карту.
+// Точка входа utility process: принимает задачи от main — строит прокси, экспортирует LUT, калибровочную
+// карту, посты и сетку, проверяет возвращённую карту.
 import type { IndexJob, IndexerRequest, IndexerResponse } from '@shared/ipc';
 import { runCardCheck } from './calibration';
 import { runExport } from './export';

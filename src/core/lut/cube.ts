@@ -11,13 +11,17 @@ export class CubeError extends Error {}
 
 const fmt = (v: number) => v.toFixed(CUBE_DECIMALS);
 
+const CUBE_SPACE = 'Вход и выход — sRGB с гаммой, домен 0..1: как JPEG, загруженный в Gridtone.';
+const CUBE_PLACE = 'Ставить туда, где изображение совпадает с этим JPEG: после проявки, до стилизации.';
+
 /** Комментарий в начале экспортированного `.cube`: что внутри и в какую точку обработки его ставить. */
 export function lookCubeComments(lookName: string): string[] {
-  return [
-    `Gridtone — образ «${lookName}»`,
-    'Вход и выход — sRGB с гаммой, домен 0..1: как JPEG, загруженный в Gridtone.',
-    'Ставить туда, где изображение совпадает с этим JPEG: после проявки, до стилизации.',
-  ];
+  return [`Gridtone — образ «${lookName}»`, CUBE_SPACE, CUBE_PLACE];
+}
+
+/** LUT на каждый пост (docs/decisions/0017-post-export.md): связка «поправка фото + образ» одного фото. */
+export function postCubeComments(postName: string): string[] {
+  return [`Gridtone — пост «${postName}»: поправка фото и образ, только для этого фото`, CUBE_SPACE, CUBE_PLACE];
 }
 
 /** В TITLE нет двойных кавычек и переводов строк, в комментарии — переводов строк. */

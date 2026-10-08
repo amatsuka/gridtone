@@ -38,6 +38,8 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
   core/metrics/tile.ts, воркер метрик только декодирует прокси: так e2e сверяет заливки с тем же кодом.
 - LUT запекается только через core/lut/bake.ts — узлы из applyBaked, без шейдера (ADR 0014).
   Экспорт пишет только в новую подпапку и с флагом wx: существующие файлы не перезаписываются.
+- Посты и `Сетка.png` режутся из оригинала, сверенного по хэшу, по feedFrameTransform / gridWindowTransform;
+  пиксели считает только core/image/render.ts с параметрами плитки — postPipeline (ADR 0017).
 - Новая зависимость — только с записью в docs/decisions/. npm 12 блокирует install-скрипты:
   если пакету он нужен, разрешать осознанно через `npm install-scripts approve <pkg>`.
 - В конце этапа обновить docs/progress.md: что сделано, решения, что дальше.

@@ -4,7 +4,7 @@ import type { CardReport } from '@core/lut/calibration';
 import type { Lut3D } from '@core/lut/lut3d';
 import type { LutExportSize } from '@core/lut/verify';
 import type { ProjectPatch } from '@core/project/patch';
-import type { AssetRef, Project } from '@core/project/types';
+import type { AssetRef, Crop, Project, Ratio } from '@core/project/types';
 import type { ViewMode } from './view';
 
 // ─── renderer ↔ main ────────────────────────────────────────────────────────
@@ -95,13 +95,19 @@ export interface LutExportRequest {
   hald: boolean;
 }
 
-/** Экран «Экспорт». Разделы добавляются по подэтапам этапа 3; папку спрашивает main. */
+/** Экран «Экспорт» (spec, «Экраны»); папку спрашивает main. */
 export interface ExportRequest {
   /** Проект, из которого экспортируем: если открыт уже другой, экспорт не начнётся. */
   dir: string;
   lut?: LutExportRequest;
   /** Калибровочная карта `Калибровка.png` рядом с LUT (docs/decisions/0016-calibration-card.md). */
   card?: boolean;
+  /** JPEG постов из оригиналов по кадру ленты, с номерами в порядке публикации (docs/decisions/0017-post-export.md). */
+  posts?: boolean;
+  /** `Сетка.png` из окон сетки. */
+  grid?: boolean;
+  /** `.cube` связки «поправка фото + образ» на каждый пост. */
+  postLuts?: boolean;
 }
 
 /** «Проверить карту…»: карту, которую вернул редактор, main спрашивает диалогом и сверяет с образом. */
@@ -127,7 +133,10 @@ export interface ExportProgress {
   done: number;
   /** Записанные файлы, имена внутри dir, в порядке записи. */
   files: string[];
+  /** Незаписанные файлы: пост без оригинала, ошибка диска. */
   errors: { file: string; message: string }[];
+  /** Записанные с оговоркой: оригинал увеличен, плитка сетки из превью. */
+  warnings: { file: string; message: string }[];
   finished: boolean;
 }
 
@@ -225,9 +234,47 @@ export interface LutExportItem {
   hald: boolean;
 }
 
+/** Оригинал фото для поста или плитки сетки: читается целиком и сверяется по хэшу (ADR 0017). */
+export interface ExportSource {
+  path: string;
+  /** SHA-256 из AssetRef: изменившийся оригинал не экспортируется. */
+  hash: string;
+}
+
+/** Пост: JPEG из оригинала по кадру ленты и/или `.cube` его связки «поправка фото + образ». */
+export interface PostExportItem {
+  /** «1 — рампа»: файлы <fileBase>.jpg и <fileBase>.cube. */
+  fileBase: string;
+  source: ExportSource;
+  crop: Crop;
+  /** Поправка фото, образ и LUT образа — то, что видно на плитке. */
+  params: PipelineParams;
+  jpeg: boolean;
+  cube: boolean;
+}
+
+/** Плитка `Сетка.png`: окно сетки из оригинала, а если его нет — из прокси 2048. */
+export interface GridTileItem {
+  /** «плитка 3 (рампа)» — для оговорок в отчёте. */
+  label: string;
+  source: ExportSource;
+  /** Прокси 2048 в cache/ проекта: запасной источник, если оригинал пропал или изменился. */
+  fallback: string;
+  crop: Crop;
+  params: PipelineParams;
+}
+
+export interface GridExportItem {
+  file: string;
+  ratio: Ratio;
+  columns: number;
+  /** По порядку сетки; null — позиция без фото. */
+  tiles: (GridTileItem | null)[];
+}
+
 /**
- * Экспорт в utility process: калибровочная карта, затем LUT образов. Папка уже создана main;
- * файлы в ней не перезаписываются.
+ * Экспорт в utility process: калибровочная карта, LUT образов, посты в порядке публикации, сетка.
+ * Папка уже создана main; файлы в ней не перезаписываются.
  */
 export interface ExportJob {
   type: 'export';
@@ -236,6 +283,8 @@ export interface ExportJob {
   /** Имя файла карты или null, если карта не нужна. */
   cardFile: string | null;
   luts: LutExportItem[];
+  posts: PostExportItem[];
+  grid: GridExportItem | null;
 }
 
 /** Проверка возвращённой карты: чтение рецептом цвета прокси (ADR 0004), замер и диагноз core. */
@@ -256,8 +305,8 @@ export type IndexErrorCode = 'unsupported' | 'hash-mismatch' | 'failed';
 export type IndexerResponse =
   | { type: 'item'; jobId: string; index: number; ok: true; asset: IndexedAsset }
   | { type: 'item'; jobId: string; index: number; ok: false; code: IndexErrorCode; error: string }
-  /** Экспорт: файл записан (ok) или не записан; file — имя внутри папки задачи. */
-  | { type: 'file'; jobId: string; file: string; ok: true }
+  /** Экспорт: файл записан (ok), возможно с оговорками, или не записан; file — имя внутри папки задачи. */
+  | { type: 'file'; jobId: string; file: string; ok: true; warnings?: string[] }
   | { type: 'file'; jobId: string; file: string; ok: false; error: string }
   /** Проверка карты: последнее сообщение задачи, 'done' после него не приходит. */
   | { type: 'card'; jobId: string; ok: true; report: CardReport }

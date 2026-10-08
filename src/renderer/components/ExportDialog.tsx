@@ -2,16 +2,17 @@ import { useEffect, useState } from 'react';
 import type { Rgb } from '@core/color/srgb';
 import { CARD_HEIGHT, CARD_LIMITS, CARD_WIDTH, type CardReport } from '@core/lut/calibration';
 import { LUT_CHECK_LIMITS, type LutCheck, type LutExportSize } from '@core/lut/verify';
+import { GRID_TILE_WIDTH, postSize, publishOrder } from '@core/project/publish';
 import type { Look } from '@core/project/types';
-import type { CalibrationCheckResult, ExportProgress, ExportStarted } from '@shared/ipc';
+import type { CalibrationCheckResult, ExportProgress, ExportStarted, ProjectSnapshot } from '@shared/ipc';
 import { closeExportDialog } from '../commands';
 import { lutCheckKey, requestLutCheck, useLutChecks, type LutCheckResult } from '../lutCheck';
 import { lookLut, useLutStore, type LookLut } from '../luts';
 import { api, useAppStore } from '../store';
 
 /**
- * Экран «Экспорт» (spec, «Экраны»). Разделы: LUT (docs/decisions/0014-lut-export.md) и калибровочная
- * карта (docs/decisions/0016-calibration-card.md).
+ * Экран «Экспорт» (spec, «Экраны»). Разделы: LUT (docs/decisions/0014-lut-export.md), посты и сетка
+ * (docs/decisions/0017-post-export.md), калибровочная карта (docs/decisions/0016-calibration-card.md).
  */
 export function ExportDialog() {
   const open = useAppStore((state) => state.exportOpen);
@@ -35,6 +36,8 @@ function ExportForm() {
   const [hald, setHald] = useState(true);
   /** Карта нужна один раз на редактор, поэтому по умолчанию не отмечена. */
   const [card, setCard] = useState(false);
+  /** Посты, сетка и LUT постов пишутся из оригиналов и занимают время: по умолчанию не отмечены. */
+  const [posts, setPosts] = useState<PostsChoice>({ posts: false, grid: false, postLuts: false });
   const [run, setRun] = useState<RunState>({ state: 'idle' });
 
   // LUT образа входит в проверку (ADR 0015): пока его таблица едет из main, проверка ждёт.
@@ -60,9 +63,13 @@ function ExportForm() {
   const job = run.state === 'started' ? run.job : null;
   const current = job && progress?.jobId === job.jobId ? progress : null;
   const running = run.state === 'starting' || (job !== null && !current?.finished);
-  // Раздел LUT входит в экспорт, если отмечены образ и формат; карта — сама по себе.
+  // Раздел LUT входит в экспорт, если отмечены образ и формат; карта, посты и сетка — сами по себе.
   const lutSection = chosen.length > 0 && (cube || hald);
-  const ready = (lutSection || card) && (!lutSection || chosen.every((look) => !cube || sizeOf(look) !== undefined));
+  const postCount = publishOrder(snapshot.project.slots).length;
+  const postSection = postCount > 0 && (posts.posts || posts.postLuts);
+  const gridSection = snapshot.project.slots.length > 0 && posts.grid;
+  const ready =
+    (lutSection || card || postSection || gridSection) && (!lutSection || chosen.every((look) => !cube || sizeOf(look) !== undefined));
 
   const toggle = (id: string) =>
     setSelected((now) => {
@@ -78,6 +85,9 @@ function ExportForm() {
         dir: snapshot.dir,
         ...(lutSection ? { lut: { looks: chosen.map((look) => ({ id: look.id, size: sizeOf(look) ?? 33 })), cube, hald } } : {}),
         ...(card ? { card: true } : {}),
+        ...(postSection && posts.posts ? { posts: true } : {}),
+        ...(postSection && posts.postLuts ? { postLuts: true } : {}),
+        ...(gridSection ? { grid: true } : {}),
       });
       setRun(started ? { state: 'started', job: started } : { state: 'idle' });
     } catch (err) {
@@ -140,6 +150,8 @@ function ExportForm() {
           </p>
           <Recipes />
         </section>
+
+        <PostsSection snapshot={snapshot} choice={posts} onChange={setPosts} />
 
         <CalibrationSection dir={snapshot.dir} looks={looks} card={card} onCard={setCard} />
 
@@ -272,6 +284,80 @@ function Recipes() {
   );
 }
 
+interface PostsChoice {
+  posts: boolean;
+  grid: boolean;
+  postLuts: boolean;
+}
+
+const SIZE_NOTE = (['4:5', '3:4', '1:1'] as const).map((aspect) => `${aspect} — ${postSize(aspect).join(' × ')}`).join(', ');
+
+/** «1 пост», «2 поста», «5 постов». */
+function postsWord(n: number): string {
+  const tens = n % 100;
+  const ones = n % 10;
+  if (tens >= 11 && tens <= 14) return 'постов';
+  return ones === 1 ? 'пост' : ones >= 2 && ones <= 4 ? 'поста' : 'постов';
+}
+
+/**
+ * Посты и сетка (docs/decisions/0017-post-export.md): JPEG постов из оригиналов по кадру ленты с номерами
+ * в порядке публикации, `Сетка.png` из окон сетки и `.cube` связки «поправка фото + образ» на каждый пост.
+ */
+function PostsSection({
+  snapshot,
+  choice,
+  onChange,
+}: {
+  snapshot: ProjectSnapshot;
+  choice: PostsChoice;
+  onChange: (choice: PostsChoice) => void;
+}) {
+  const { project, assets } = snapshot;
+  const order = publishOrder(project.slots);
+  const missing = order.filter((i) => {
+    const assetId = project.slots[i]?.assetId;
+    return assetId !== undefined && assets[assetId]?.original !== 'ok';
+  }).length;
+  const toggle = (key: keyof PostsChoice) => onChange({ ...choice, [key]: !choice[key] });
+  return (
+    <section className="export-section" data-testid="posts-section">
+      <h3>Посты и сетка</h3>
+      <label className="check">
+        <input type="checkbox" checked={choice.posts} disabled={order.length === 0} onChange={() => toggle('posts')} />
+        Посты
+      </label>
+      <p className="muted export-note">
+        JPEG из оригиналов по кадру ленты: {SIZE_NOTE}; sRGB, качество 95. Оригиналы не меняются.
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={choice.grid} disabled={project.slots.length === 0} onChange={() => toggle('grid')} />
+        Сетка
+      </label>
+      <p className="muted export-note">
+        Сетка.png — окна сетки, {project.grid.columns} колонки, плитка {GRID_TILE_WIDTH} px.
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={choice.postLuts} disabled={order.length === 0} onChange={() => toggle('postLuts')} />
+        LUT на каждый пост
+      </label>
+      <p className="muted export-note">
+        .cube связки «поправка фото + образ»: ставится только на своё фото, вместо выравнивания в редакторе.
+      </p>
+      <p className="muted export-note" data-testid="posts-count">
+        {order.length === 0
+          ? 'В сетке нет постов к публикации.'
+          : `${order.length} ${postsWord(order.length)} к публикации. Номер в имени файла — порядок публикации: «1 — …» — последняя плитка сетки, её публикуют первой.`}
+      </p>
+      {missing > 0 && (
+        <p className="export-error" data-testid="posts-missing">
+          Постов без оригинала или с изменившимся оригиналом: {missing}. Они будут пропущены, в сетку попадёт превью.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function Result({ dir, progress }: { dir: string; progress: ExportProgress | null }) {
   return (
     <div className="export-result" data-testid="export-result" data-dir={dir} data-finished={progress?.finished ? 'true' : 'false'}>
@@ -282,6 +368,7 @@ function Result({ dir, progress }: { dir: string; progress: ExportProgress | nul
             : 'Готово'
           : `Запись… ${progress?.done ?? 0} из ${progress?.total ?? '…'}`}
       </p>
+      {progress && !progress.finished && <progress className="export-progress" value={progress.done} max={progress.total} />}
       <p className="export-path" title={dir}>
         {dir}
       </p>
@@ -293,9 +380,14 @@ function Result({ dir, progress }: { dir: string; progress: ExportProgress | nul
         </ul>
       )}
       {progress?.errors.map(({ file, message }) => (
-        <p key={file} className="export-error">
+        <p key={file} className="export-error" data-testid="export-error">
           {file ? `${file}: ` : ''}
           {message}
+        </p>
+      ))}
+      {progress?.warnings.map(({ file, message }, i) => (
+        <p key={`${file}-${i}`} className="export-warning" data-testid="export-warning">
+          {file}: {message}
         </p>
       ))}
     </div>
