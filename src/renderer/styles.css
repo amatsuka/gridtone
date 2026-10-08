@@ -1319,3 +1319,51 @@ button:disabled {
 .rhythm-fits li.chosen {
   font-weight: 600;
 }
+
+/* Раздел «Выбросы» (ADR 0020): строка на плитку — номер и причины «было → ожидается». */
+.outliers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outlier {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.outlier:hover {
+  background: var(--control-hover);
+}
+
+.outlier.selected {
+  background: var(--control);
+  box-shadow: inset 2px 0 0 var(--text);
+}
+
+.outlier-number {
+  flex: none;
+  min-width: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.outlier-reasons {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.outlier-marks {
+  font-size: 12px;
+}

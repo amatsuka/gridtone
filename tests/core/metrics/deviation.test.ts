@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { oklabToOklch } from '@core/color/oklab';
 import { linearSrgbToOklab } from '@core/color/oklab';
 import { decodeSrgb } from '@core/color/transfer';
-import { deviation, deviationColor, DEVIATION_HUE_CHROMA } from '@core/metrics/deviation';
+import { deviation, deviationColor, DEVIATION_HUE_CHROMA, targetParts, worstRatio } from '@core/metrics/deviation';
 import type { LabStats } from '@core/metrics/palette';
 import type { SlotTarget } from '@core/project/types';
 
@@ -48,6 +48,27 @@ describe('отклонение от цели', () => {
     const t = target({ tolerance: { L: 0, hue: 0, chroma: 0 } });
     expect(deviation(stats(0.6), t)).toBe(0);
     expect(deviation(stats(0.61), t)).toBe(Infinity);
+  });
+});
+
+describe('части отклонения от цели', () => {
+  it('L всегда, хрома и тон — если цель их задаёт; отклонение — худшая часть', () => {
+    expect(targetParts(stats(0.62), target()).map((p) => p.reason)).toEqual(['L']);
+    const t = target({ hue: 30, chroma: 0.1 });
+    const parts = targetParts(stats(0.62, 0.14, 70), t);
+    expect(parts.map((p) => [p.reason, p.value, p.expected, p.tolerance])).toEqual([
+      ['L', 0.62, 0.6, 0.05],
+      ['chroma', 0.14, 0.1, 0.04],
+      ['hue', 70, 30, 20],
+    ]);
+    expect(parts.map((p) => p.ratio)).toEqual([expect.closeTo(0.4, 12), expect.closeTo(1, 12), expect.closeTo(2, 12)]);
+    expect(worstRatio(parts)).toBe(deviation(stats(0.62, 0.14, 70), t));
+  });
+
+  it('серая плитка при нулевом допуске тона — 0, а не NaN', () => {
+    const t = target({ hue: 30, tolerance: { L: 0.05, hue: 0, chroma: 0.04 } });
+    expect(deviation(stats(0.6, 0, 210), t)).toBe(0);
+    expect(deviation(stats(0.6, 0.01, 210), t)).toBe(Infinity);
   });
 });
 

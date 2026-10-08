@@ -1,7 +1,8 @@
 // Метрики сетки (docs/spec.md, «Метрики сетки»; docs/decisions/0018-features-grid-metrics.md): карта яркости
-// 3 × N, разброс L, контраст соседей, ритм, палитра сетки, точки колеса и гармония (ADR 0019). Одна чистая
-// функция над проектом и признаками плиток: её вызывают вкладка «Анализ», тесты и скрипт `analyze`.
-// Производные данные — в проект и историю не попадают.
+// 3 × N, разброс L, контраст соседей, ритм, палитра сетки, точки колеса, гармония (ADR 0019), ожидания плиток
+// и выбросы (ADR 0020). Одна чистая функция над проектом и признаками плиток: её вызывают вкладка «Анализ»,
+// режим 7, тесты и скрипт `analyze`. Производные данные — в проект и историю не попадают.
+import { outliersOf, tileExpectations, type TileExpectation } from '../harmony/outliers';
 import { fitHarmony, type Harmony } from '../harmony/templates';
 import type { Features, Project, Vec3 } from '../project/types';
 import { meanChroma, meanHue } from './features';
@@ -54,6 +55,13 @@ export interface GridAnalysis {
   measured: number;
   /** null — плиток с признаками меньше MIN_GRID_TILES (rhythm.ts): анализа сетки нет, признаки плиток есть. */
   metrics: GridMetrics | null;
+  /**
+   * Ожидание и отклонение плиток с признаками, в порядке сетки: от цели позиции или от сетки. Без анализа
+   * сетки — только плитки с целью; у остальных ожидания нет (режим 7 — «нет цели»).
+   */
+  expectations: TileExpectation[];
+  /** Выбросы — плитки с отклонением больше допуска, от самого большого. */
+  outliers: TileExpectation[];
 }
 
 /**
@@ -88,9 +96,11 @@ export function analyzeGrid(
     photos: cells.filter((cell) => cell.photo).length,
     measured: measured.length,
     metrics: null,
+    expectations: [],
+    outliers: [],
   };
   // Ритма нет, когда плиток с L меньше MIN_GRID_TILES: тогда нет и остальных метрик сетки.
-  if (!rhythm) return analysis;
+  if (!rhythm) return withExpectations(analysis, project, features);
 
   const tiles = measured.map((cell) => features[cell.slotId] as Features);
   const wheel = measured.map((cell, i): WheelPoint => {
@@ -105,7 +115,16 @@ export function analyzeGrid(
     wheel,
     harmony: fitHarmony(wheel),
   };
-  return analysis;
+  return withExpectations(analysis, project, features);
+}
+
+function withExpectations(
+  analysis: GridAnalysis,
+  project: Pick<Project, 'grid' | 'slots'>,
+  features: Readonly<Record<string, Features | undefined>>,
+): GridAnalysis {
+  const expectations = tileExpectations(project, features, analysis.cells, analysis.metrics);
+  return { ...analysis, expectations, outliers: outliersOf(expectations) };
 }
 
 /** Средняя |ΔL| по парам соседей в строке и в колонке, где у обоих есть L. */

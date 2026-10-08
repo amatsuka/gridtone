@@ -14,6 +14,7 @@
     "src/renderer/selection.ts",
     "shared/**/*",
     "tests/**/*",
+    "scripts/**/*",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts"

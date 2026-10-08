@@ -1,9 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
-import { deviation, deviationColor } from '@core/metrics/deviation';
+import { formatPart } from '@core/harmony/outliers';
+import { deviationColor } from '@core/metrics/deviation';
 import { labToSrgb8, type TileMetrics } from '@core/metrics/tile';
-import type { Slot } from '@core/project/types';
+import type { Project, Slot } from '@core/project/types';
 import type { ProjectSnapshot } from '@shared/ipc';
 import type { ViewMode } from '@shared/view';
+import { gridAnalysis } from '../analysis';
 import { openEditor } from '../commands';
 import { useMetricsStore } from '../metrics';
 import { useAppStore } from '../store';
@@ -29,7 +31,7 @@ export function GridView({ snapshot }: { snapshot: ProjectSnapshot }) {
 
   const slots = useMemo(() => previewOrder(project.slots, dragOrder), [project.slots, dragOrder]);
   const selected = useMemo(() => new Set(selection.ids), [selection.ids]);
-  const overlays = useMemo(() => tileOverlays(project.slots, metrics, viewMode), [project.slots, metrics, viewMode]);
+  const overlays = useMemo(() => tileOverlays(project, metrics, viewMode), [project, metrics, viewMode]);
 
   const style = {
     '--tile-aspect': project.grid.ratio === '1:1' ? '1 / 1' : '3 / 4',
@@ -104,25 +106,41 @@ function formatDeviation(d: number): string {
 }
 
 /**
- * Заливки DOM-слоя: в режиме 5 — доминанта, в режиме 7 — отклонение от цели (ADR 0012).
- * Пока метрики не готовы, плитка показывает фото.
+ * Заливки DOM-слоя: в режиме 5 — доминанта, в режиме 7 — отклонение от ожидания (ADR 0012, 0020): от цели
+ * позиции, а без цели — от ожидания сетки (analyzeGrid, от 6 плиток). Ожидания нет — «нет цели».
+ * Пока метрики плитки не готовы, она показывает фото.
  */
-function tileOverlays(slots: readonly Slot[], metrics: Readonly<Record<string, TileMetrics>>, mode: ViewMode): Map<string, TileOverlay> {
+function tileOverlays(project: Project, metrics: Readonly<Record<string, TileMetrics>>, mode: ViewMode): Map<string, TileOverlay> {
   const overlays = new Map<string, TileOverlay>();
   if (mode !== 'dominant' && mode !== 'deviation') return overlays;
-  for (const slot of slots) {
+  const expectations =
+    mode === 'deviation' ? new Map(gridAnalysis(project, metrics).expectations.map((e) => [e.slotId, e])) : undefined;
+  for (const slot of project.slots) {
     if (!slot.assetId) continue;
     const m = metrics[slot.id];
+    if (!m) continue;
     if (mode === 'dominant') {
-      if (m) overlays.set(slot.id, { kind: 'dominant', color: cssRgb(labToSrgb8(m.dominant)) });
-    } else if (!slot.target) {
-      overlays.set(slot.id, { kind: 'no-target', color: NO_TARGET_COLOR, text: 'нет цели' });
-    } else if (m) {
-      const d = deviation(m, slot.target);
-      const [r, g, b] = deviationColor(d);
-      const color = cssRgb([Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)]);
-      overlays.set(slot.id, { kind: 'deviation', color, text: formatDeviation(d), value: d });
+      overlays.set(slot.id, { kind: 'dominant', color: cssRgb(labToSrgb8(m.dominant)) });
+      continue;
     }
+    const expectation = expectations?.get(slot.id);
+    if (!expectation) {
+      overlays.set(slot.id, { kind: 'no-target', color: NO_TARGET_COLOR, text: 'нет цели' });
+      continue;
+    }
+    const d = expectation.deviation;
+    const [r, g, b] = deviationColor(d);
+    const color = cssRgb([Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)]);
+    const source = expectation.source === 'target' ? 'Ожидание — цель позиции' : 'Ожидание — по сетке';
+    const parts = expectation.parts.map((part) => `${formatPart(part)} (${formatDeviation(part.ratio)})`);
+    overlays.set(slot.id, {
+      kind: 'deviation',
+      color,
+      text: formatDeviation(d),
+      value: d,
+      source: expectation.source,
+      title: [source, ...parts].join('\n'),
+    });
   }
   return overlays;
 }

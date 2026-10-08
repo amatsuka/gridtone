@@ -3,14 +3,18 @@ import type { Slot } from '@core/project/types';
 import { proxyUrl } from '@shared/cache';
 import type { AssetStatus } from '@shared/ipc';
 
-/** Заливка DOM-слоя в режимах 5 и 7 (ADR 0012): закрывает фото на холсте. */
+/** Заливка DOM-слоя в режимах 5 и 7 (ADR 0012, 0020): закрывает фото на холсте. */
 export interface TileOverlay {
   kind: 'dominant' | 'deviation' | 'no-target';
   /** CSS-цвет заливки. */
   color: string;
   text?: string;
-  /** Отклонение от цели в долях допуска. */
+  /** Отклонение от ожидания в долях допуска. */
   value?: number;
+  /** Откуда ожидание: цель позиции или сетка (ADR 0020). */
+  source?: 'target' | 'grid';
+  /** Подсказка: источник ожидания и части отклонения. */
+  title?: string;
 }
 
 const ORIGINAL_HINT: Record<Exclude<AssetStatus['original'], 'ok'>, string> = {
@@ -74,6 +78,8 @@ export const Tile = memo(function Tile({
           data-testid="tile-fill"
           data-kind={overlay.kind}
           data-value={overlay.value}
+          data-source={overlay.source}
+          title={overlay.title}
           style={{ backgroundColor: overlay.color }}
         >
           {overlay.text !== undefined && <span className="tile-fill-text">{overlay.text}</span>}

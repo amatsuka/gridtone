@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.core.json && tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "test": "vitest run",
     "test:e2e": "electron-vite build && playwright test",
-    "fixtures": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tests/fixtures/cli.ts"
+    "fixtures": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tests/fixtures/cli.ts",
+    "analyze": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/analyze.ts"
   },
   "dependencies": {
     "sharp": "^0.35.5"

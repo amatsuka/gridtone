@@ -1,17 +1,19 @@
-// Вкладка «Анализ» инспектора (spec, модуль 3; docs/decisions/0018-features-grid-metrics.md, 0019-harmony.md):
-// карта яркости, ритм, разброс, контраст соседей, колесо тонов с гармонией и палитра сетки. Признаки плиток
-// считает воркер метрик, анализ сетки по ним — analyzeGrid из core прямо здесь: на 90 плитках это
-// миллисекунды. В проект ничего не пишется.
-import { useMemo, type CSSProperties, type MouseEvent } from 'react';
-import { analyzeGrid, type GridAnalysis, type GridMetrics, type LumaCell } from '@core/metrics/grid';
+// Вкладка «Анализ» инспектора (spec, модуль 3; docs/decisions/0018-features-grid-metrics.md, 0019-harmony.md,
+// 0020-outliers.md): карта яркости, ритм, разброс, контраст соседей, колесо тонов с гармонией, палитра сетки
+// и выбросы. Признаки плиток считает воркер метрик, анализ сетки по ним — analyzeGrid из core в renderer
+// (`useGridAnalysis`): на 90 плитках это миллисекунды. В проект ничего не пишется.
+import type { CSSProperties, MouseEvent } from 'react';
+import type { GridAnalysis, GridMetrics, LumaCell } from '@core/metrics/grid';
 import type { PaletteEntry } from '@core/metrics/palette';
 import { FLAT_SPREAD, MIN_GRID_TILES, RHYTHM_LABELS, type Rhythm, type TemplateFit } from '@core/metrics/rhythm';
 import { labToSrgb8 } from '@core/metrics/tile';
 import type { Project } from '@core/project/types';
+import { useGridAnalysis } from '../analysis';
 import { clickTileInAnalysis } from '../commands';
 import { useMetricsStore } from '../metrics';
 import { useAppStore } from '../store';
 import { HarmonySection } from './HarmonySection';
+import { OutliersSection } from './OutliersSection';
 
 const cssRgb = ([r, g, b]: readonly [number, number, number]) => `rgb(${r} ${g} ${b})`;
 const fixed = (value: number, digits = 2) => value.toFixed(digits);
@@ -19,7 +21,7 @@ const fixed = (value: number, digits = 2) => value.toFixed(digits);
 export function AnalysisPanel({ project }: { project: Project }) {
   const bySlot = useMetricsStore((state) => state.bySlot);
   const { done, total } = useMetricsStore((state) => state.progress);
-  const analysis = useMemo(() => analyzeGrid(project, bySlot), [project, bySlot]);
+  const analysis = useGridAnalysis(project);
 
   return (
     <div className="analysis" data-testid="analysis-panel" data-photos={analysis.photos} data-measured={analysis.measured}>
@@ -52,6 +54,12 @@ export function AnalysisPanel({ project }: { project: Project }) {
               <HarmonySection metrics={analysis.metrics} bySlot={bySlot} />
               <h3>Палитра сетки</h3>
               <PaletteBar palette={analysis.metrics.palette} />
+            </>
+          )}
+          {(analysis.metrics || analysis.expectations.length > 0) && (
+            <>
+              <h3>Выбросы</h3>
+              <OutliersSection analysis={analysis} />
             </>
           )}
         </>

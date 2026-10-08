@@ -14,6 +14,7 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
 - npm run test:e2e — сборка + Playwright: критерии этапов и сверка шейдера с эталоном
 - npm run build — сборка
 - npm run fixtures -- <папка> [N] — синтетические фото для ручной проверки
+- npm run analyze -- <папка> — признаки, ритм, гармония и выбросы папки фото как сетки (калибровка порогов)
 
 ## Правила
 - Логика цвета, метрик, гармонии, подбора и LUT — только в src/core, без DOM и Node.
@@ -37,8 +38,9 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
 - Режим просмотра — состояние интерфейса, в проект не пишется (ADR 0012). Метрики плиток считает
   core/metrics/tile.ts, воркер метрик только декодирует прокси: так e2e сверяет заливки с тем же кодом.
   Признаки плитки — tileFeatures (core/metrics/features.ts), анализ сетки — analyzeGrid (core/metrics/grid.ts),
-  гармония — fitHarmony (core/harmony/templates.ts, ADR 0019) внутри него;
-  анализ — производные данные, в проект и историю не пишется (ADR 0018).
+  гармония — fitHarmony (core/harmony/templates.ts, ADR 0019) и выбросы — tileExpectations
+  (core/harmony/outliers.ts, ADR 0020) внутри него; режим 7 и вкладка «Анализ» берут один расчёт
+  (renderer/analysis.ts). Анализ — производные данные, в проект и историю не пишется (ADR 0018).
 - LUT запекается только через core/lut/bake.ts — узлы из applyBaked, без шейдера (ADR 0014).
   Экспорт пишет только в новую подпапку и с флагом wx: существующие файлы не перезаписываются.
 - Посты и `Сетка.png` режутся из оригинала, сверенного по хэшу, по feedFrameTransform / gridWindowTransform;

@@ -1,5 +1,6 @@
-// Режим 7 «Отклонение»: насколько средние плитки далеки от цели позиции (docs/decisions/0012-view-modes.md).
-// Отклонение нормировано на допуск цели: 0 — ровно в цели, 1 — на краю допуска.
+// Режим 7 «Отклонение»: насколько средние плитки далеки от цели позиции (docs/decisions/0012-view-modes.md)
+// или, без цели, от ожидания сетки (harmony/outliers.ts, ADR 0020). Отклонение нормировано на допуск:
+// 0 — ровно в ожидании, 1 — на краю допуска. Части отклонения — те же причины, что у выбросов.
 import { hueDistance } from '../color/math';
 import { oklabToLinearSrgb, oklchToOklab } from '../color/oklab';
 import type { Lab, Rgb } from '../color/srgb';
@@ -7,27 +8,70 @@ import { encodeSrgbClamped } from '../color/transfer';
 import type { SlotTarget } from '../project/types';
 import type { LabStats } from './palette';
 
-/** От этой средней хромы тон плитки весит полностью; у почти серой плитки тон — шум. */
+/** От этой хромы тон плитки весит полностью; у почти серой плитки тон — шум. */
 export const DEVIATION_HUE_CHROMA = 0.05;
 
-/**
- * Худшая из частей: |ΔL| / τL, а если цель задаёт тон и хрому — Δтона / τтона (с весом по хроме
- * плитки) и |ΔC| / τC. Палитра цели пока не учитывается: её сравнение — на этапе 5.
- */
-export function deviation(stats: Pick<LabStats, 'meanL' | 'meanC' | 'hue'>, target: SlotTarget): number {
-  const { tolerance } = target;
-  let worst = ratio(Math.abs(stats.meanL - target.L), tolerance.L);
-  if (target.hue !== undefined) {
-    const weight = Math.min(1, stats.meanC / DEVIATION_HUE_CHROMA);
-    worst = Math.max(worst, weight * ratio(hueDistance(stats.hue, target.hue), tolerance.hue));
-  }
-  if (target.chroma !== undefined) worst = Math.max(worst, ratio(Math.abs(stats.meanC - target.chroma), tolerance.chroma));
-  return worst;
+/** Величина, по которой плитка отклоняется: яркость, температура, хрома (насыщенность), тон. */
+export type DeviationReason = 'L' | 'temperature' | 'chroma' | 'hue';
+
+/** Одна часть отклонения: величина плитки, ожидание, допуск и отклонение в долях допуска. */
+export interface DeviationPart {
+  reason: DeviationReason;
+  /** Значение плитки: L, температура, хрома или тон в градусах. */
+  value: number;
+  /** Ожидание: цель или ожидание сетки; у тона без цели — ближайший край сектора (внутри — сам тон). */
+  expected: number;
+  tolerance: number;
+  /** Отклонение в долях допуска, у тона — с весом хромы: 0 — в ожидании, 1 — край допуска. */
+  ratio: number;
 }
 
-function ratio(delta: number, tolerance: number): number {
-  if (tolerance > 0) return delta / tolerance;
-  return delta === 0 ? 0 : Infinity;
+/** Вес тона по хроме плитки: 0 у серой, 1 от DEVIATION_HUE_CHROMA. */
+export function hueChromaWeight(chroma: number): number {
+  return Math.min(1, Math.max(0, chroma / DEVIATION_HUE_CHROMA));
+}
+
+/** |delta| в долях допуска; нулевой допуск — 0 при точном попадании и ∞ иначе. */
+export function toleranceRatio(delta: number, tolerance: number): number {
+  const d = Math.abs(delta);
+  if (tolerance > 0) return d / tolerance;
+  return d === 0 ? 0 : Infinity;
+}
+
+/** Тон в долях допуска с весом хромы; у серой плитки — 0, даже при нулевом допуске. */
+export function weightedHueRatio(distance: number, tolerance: number, chroma: number): number {
+  const weight = hueChromaWeight(chroma);
+  return weight === 0 ? 0 : weight * toleranceRatio(distance, tolerance);
+}
+
+/**
+ * Части отклонения от цели: L всегда, хрома и тон — только если цель их задаёт. Тон — с весом по хроме
+ * плитки. Палитра цели пока не учитывается: её сравнение — на этапе 5.
+ */
+export function targetParts(stats: Pick<LabStats, 'meanL' | 'meanC' | 'hue'>, target: SlotTarget): DeviationPart[] {
+  const { tolerance } = target;
+  const parts: DeviationPart[] = [
+    { reason: 'L', value: stats.meanL, expected: target.L, tolerance: tolerance.L, ratio: toleranceRatio(stats.meanL - target.L, tolerance.L) },
+  ];
+  if (target.chroma !== undefined) {
+    const ratio = toleranceRatio(stats.meanC - target.chroma, tolerance.chroma);
+    parts.push({ reason: 'chroma', value: stats.meanC, expected: target.chroma, tolerance: tolerance.chroma, ratio });
+  }
+  if (target.hue !== undefined) {
+    const ratio = weightedHueRatio(hueDistance(stats.hue, target.hue), tolerance.hue, stats.meanC);
+    parts.push({ reason: 'hue', value: stats.hue, expected: target.hue, tolerance: tolerance.hue, ratio });
+  }
+  return parts;
+}
+
+/** Худшая из частей — значение режима 7; без частей — 0. */
+export function worstRatio(parts: readonly DeviationPart[]): number {
+  return parts.reduce((worst, part) => Math.max(worst, part.ratio), 0);
+}
+
+/** Отклонение от цели: худшая из частей `targetParts`. */
+export function deviation(stats: Pick<LabStats, 'meanL' | 'meanC' | 'hue'>, target: SlotTarget): number {
+  return worstRatio(targetParts(stats, target));
 }
 
 // Опорные цвета шкалы в OKLCH: одной светлоты и хромы, чтобы шкала не скакала по яркости.
