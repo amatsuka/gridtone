@@ -1,5 +1,6 @@
 import { isValidLutRef } from './luts';
 import type { Project } from './types';
+import { isValidPattern, isValidTarget } from './validate';
 
 export class ProjectFormatError extends Error {
   override name = 'ProjectFormatError';
@@ -10,8 +11,9 @@ export function serializeProject(project: Project): string {
 }
 
 /**
- * Разбирает project.json и проверяет структуру верхнего уровня, ассеты, реестр LUT, образы и слоты.
- * Поля коррекции и целей пока не проверяются — их пишет только само приложение.
+ * Разбирает project.json и проверяет структуру верхнего уровня, ассеты, реестр LUT, образы, слоты, форму паттерна
+ * и целей. Поля коррекции не проверяются — их пишет только само приложение. Согласованность целей с паттерном
+ * здесь не проверяется: её держат правки (patch.ts, ADR 0023), а старый проект должен открываться.
  */
 export function parseProject(text: string): Project {
   let data: unknown;
@@ -78,6 +80,8 @@ export function parseProject(text: string): Project {
     }
   }
 
+  if (data['pattern'] !== undefined && !isValidPattern(data['pattern'])) fail('некорректный паттерн');
+
   const slots = data['slots'];
   if (!Array.isArray(slots)) fail('нет списка слотов');
   const slotIds = new Set<string>();
@@ -104,6 +108,7 @@ export function parseProject(text: string): Project {
     if (lookId !== undefined && (typeof lookId !== 'string' || !lookIds.has(lookId))) {
       fail(`слот ${id} ссылается на неизвестный образ`);
     }
+    if (slot['target'] !== undefined && !isValidTarget(slot['target'])) fail(`некорректная цель слота ${id}`);
   }
 
   return data as unknown as Project;

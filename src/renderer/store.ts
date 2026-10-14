@@ -6,14 +6,15 @@ import type { Adjust, Project } from '@core/project/types';
 import type { ExportProgress, ImportProgress, ProjectSnapshot } from '@shared/ipc';
 import type { ViewMode } from '@shared/view';
 import { History } from './history';
+import { DEFAULT_PATTERN_DRAFT, type PatternDraft } from './pattern';
 import { EMPTY_SELECTION, pruneSelection, type Selection } from './selection';
 
 export const api = window.gridtone;
 
 enablePatches();
 
-/** Вкладки инспектора: поправка фото, образы и анализ сетки (ADR 0018). */
-export type InspectorTab = 'photo' | 'look' | 'analysis';
+/** Вкладки инспектора: поправка фото, образы, анализ сетки (ADR 0018) и цель — паттерн и цели позиций (ADR 0023). */
+export type InspectorTab = 'photo' | 'look' | 'analysis' | 'target';
 export type EditorTab = 'color' | 'crop';
 
 /** Скопированные правки: коррекция основной плитки на момент копирования и выбранные группы. */
@@ -52,6 +53,8 @@ interface AppState {
   exportProgress: ExportProgress | null;
   /** Почему не импортировался `.cube`: показывается во вкладке «Образ» (ADR 0015). */
   lutImportError: string | null;
+  /** Черновик паттерна во вкладке «Цель»: в проект пишутся только клетки паттерна и цели (ADR 0023). */
+  patternDraft: PatternDraft;
 }
 
 export const useAppStore = create<AppState>()(() => ({
@@ -72,6 +75,7 @@ export const useAppStore = create<AppState>()(() => ({
   exportOpen: false,
   exportProgress: null,
   lutImportError: null,
+  patternDraft: DEFAULT_PATTERN_DRAFT,
 }));
 
 // Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.

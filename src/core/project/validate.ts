@@ -1,8 +1,10 @@
-// Проверка коррекции, кадра, образов, сетки и id новых слотов: они приходят из renderer патчами и должны
-// оставаться в своих пределах.
+// Проверка коррекции, кадра, образов, сетки, id новых слотов, целей и паттерна: они приходят из renderer патчами
+// и должны оставаться в своих пределах. Согласованность целей с паттерном и режим публикации — patch.ts
+// (docs/decisions/0023-patterns.md).
+import { PATTERN_COLUMNS, PATTERN_MAX_ROWS } from '../pattern/pattern';
 import { HUE_BANDS } from './defaults';
 import { isRecord } from './json';
-import type { Adjust, Crop, Look, Project, Pt } from './types';
+import type { Adjust, Crop, Look, Pattern, Project, Pt, SlotTarget } from './types';
 
 const SLIDERS_100 = ['temp', 'tint', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const;
 const FEED_ASPECTS: readonly unknown[] = ['4:5', '3:4', '1:1'];
@@ -17,6 +19,12 @@ const FEED_KEYS = ['aspect', 'cx', 'cy', 'zoom', 'angle'];
 const GRID_KEYS = ['cx', 'cy'];
 const LOOK_KEYS = ['id', 'name', 'adjust'];
 const GRID_SETTINGS_KEYS = ['ratio', 'columns', 'pinned'];
+const TARGET_KEYS = ['L', 'tolerance', 'hard'];
+const TARGET_OPTIONAL_KEYS = ['hue', 'chroma', 'palette'];
+const TOLERANCE_KEYS = ['L', 'hue', 'chroma'];
+const PATTERN_KEYS = ['source', 'periodRows', 'postingMode', 'cells'];
+const PATTERN_SOURCES: readonly unknown[] = ['generator', 'string', 'image', 'reference'];
+const POSTING_MODES: readonly unknown[] = ['single', 'batch'];
 
 export const LOOK_NAME_MAX = 100;
 /** id нового слота из renderer — непустая строка не длиннее (renderer даёт UUID). */
@@ -31,6 +39,10 @@ export const CROP_ZOOM_MAX = 10;
 export const CROP_ANGLE_MAX = 45;
 /** Точек в одной кривой — не больше. */
 export const CURVE_MAX_POINTS = 16;
+/** Хрома цели и её допуск — не больше: дальше охвата sRGB. */
+export const TARGET_CHROMA_MAX = 0.5;
+/** Цветов в палитре цели — не больше (палитра — этапы 6–7). */
+export const TARGET_PALETTE_MAX = 16;
 
 export function isValidAdjust(value: unknown): value is Adjust {
   if (!hasKeys(value, ADJUST_KEYS)) return false;
@@ -100,6 +112,46 @@ export function isValidGridChange(before: Project['grid'], after: unknown): afte
   );
 }
 
+/**
+ * Цель позиции (ADR 0023): L 0..1, тон 0..360 и хрома — по желанию, допуски L, тона и хромы, жёсткая или мягкая;
+ * палитра — список OKLab. Лишних полей нет.
+ */
+export function isValidTarget(value: unknown): value is SlotTarget {
+  if (!isRecord(value)) return false;
+  const keys = [...TARGET_KEYS, ...TARGET_OPTIONAL_KEYS.filter((key) => Object.hasOwn(value, key))];
+  if (!hasKeys(value, keys)) return false;
+  const { tolerance } = value;
+  return (
+    inRange(value['L'], 0, 1) &&
+    (!Object.hasOwn(value, 'hue') || (inRange(value['hue'], 0, 360) && value['hue'] < 360)) &&
+    (!Object.hasOwn(value, 'chroma') || inRange(value['chroma'], 0, TARGET_CHROMA_MAX)) &&
+    (!Object.hasOwn(value, 'palette') || isPalette(value['palette'])) &&
+    typeof value['hard'] === 'boolean' &&
+    hasKeys(tolerance, TOLERANCE_KEYS) &&
+    inRange(tolerance['L'], 0, 1) &&
+    inRange(tolerance['hue'], 0, 180) &&
+    inRange(tolerance['chroma'], 0, TARGET_CHROMA_MAX)
+  );
+}
+
+/**
+ * Форма паттерна (ADR 0023): источник, период 1…PATTERN_MAX_ROWS рядов, режим публикации, клетки периода —
+ * ровно 3 · periodRows целей. Что режим публикации равен вычисленному, проверяет patch.ts.
+ */
+export function isValidPattern(value: unknown): value is Pattern {
+  if (!hasKeys(value, PATTERN_KEYS)) return false;
+  const { periodRows, cells } = value;
+  return (
+    PATTERN_SOURCES.includes(value['source']) &&
+    POSTING_MODES.includes(value['postingMode']) &&
+    Number.isInteger(periodRows) &&
+    inRange(periodRows, 1, PATTERN_MAX_ROWS) &&
+    Array.isArray(cells) &&
+    cells.length === PATTERN_COLUMNS * periodRows &&
+    cells.every(isValidTarget)
+  );
+}
+
 export function isValidSlotId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= SLOT_ID_MAX;
 }
@@ -118,6 +170,14 @@ function isCurve(value: unknown): value is Pt[] {
     prevX = p[0];
   }
   return true;
+}
+
+function isPalette(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= TARGET_PALETTE_MAX &&
+    value.every((lab) => Array.isArray(lab) && lab.length === 3 && lab.every((x) => typeof x === 'number' && Number.isFinite(x)))
+  );
 }
 
 function inRange(value: unknown, min: number, max: number): value is number {

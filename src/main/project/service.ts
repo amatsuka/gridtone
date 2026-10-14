@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { CubeError, parseCube } from '@core/lut/cube';
 import type { Lut3D } from '@core/lut/lut3d';
+import { positionTarget } from '@core/pattern/pattern';
 import { createProject, createSlot } from '@core/project/defaults';
 import { addImportedLut, lookNameForLut, LUT_ID_RE, lutIdFromHash } from '@core/project/luts';
 import { applyProjectPatches } from '@core/project/patch';
@@ -255,7 +256,10 @@ export class ProjectService {
       session.update((project, assets) => {
         for (const asset of added) {
           project.assets[asset.id] = asset;
-          project.slots.push(createSlot(randomUUID(), asset.id));
+          // Слот — только в конец (ADR 0011); его цель — клетка паттерна для этой позиции (ADR 0023).
+          const slot = createSlot(randomUUID(), asset.id);
+          const target = positionTarget(project, project.slots.length);
+          project.slots.push(target ? { ...slot, target } : slot);
           assets[asset.id] = { proxy: 'ready', original: 'ok' };
         }
         for (const { id, path } of relinked) {

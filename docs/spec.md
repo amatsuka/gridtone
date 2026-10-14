@@ -86,7 +86,7 @@ interface Slot {
   crop: Crop;
   adjust: Adjust;                // поправка этого фото: приводит его к образу
   lookId?: string;
-  target?: SlotTarget;           // цель из паттерна или референса
+  target?: SlotTarget;           // цель позиции — проекция паттерна: cells[i mod 3·periodRows], у закреплённых нет (docs/decisions/0023-patterns.md)
   candidates: Candidate[];       // варианты для перебора в позиции
   choiceLocked: boolean;         // выбор зафиксирован, автоподбор его не трогает
 }
@@ -121,8 +121,8 @@ interface SlotTarget {
 interface Pattern {
   source: 'generator' | 'string' | 'image' | 'reference';
   periodRows: number;            // паттерн повторяется вниз с этим периодом
-  postingMode: 'single' | 'batch'; // переживает одиночные посты или только пачки по 3
-  cells: SlotTarget[];
+  postingMode: 'single' | 'batch'; // переживает одиночные посты или только пачки по 3; считает core
+  cells: SlotTarget[];           // 3 · periodRows клеток по рядам; клетка 0 — позиция 0, левый верхний угол
 }
 
 interface ReferenceGrid { imagePath: string; cells: Features[]; look?: Look }

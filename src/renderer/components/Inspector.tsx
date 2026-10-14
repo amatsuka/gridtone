@@ -25,16 +25,18 @@ import { plural } from '../plural';
 import { useAppStore, type InspectorTab } from '../store';
 import { AdjustPanel } from './AdjustPanel';
 import { AnalysisPanel } from './AnalysisPanel';
+import { TargetPanel } from './TargetPanel';
 
 const TABS: { id: InspectorTab; label: string }[] = [
   { id: 'photo', label: 'Фото' },
   { id: 'look', label: 'Образ' },
   { id: 'analysis', label: 'Анализ' },
+  { id: 'target', label: 'Цель' },
 ];
 
 /**
  * Правая панель: поправка основной плитки и образы проекта (spec, «Коррекция в два уровня»),
- * анализ сетки (spec, модуль 3).
+ * анализ сетки (spec, модуль 3), паттерн и цели позиций (spec, модуль 4).
  */
 export function Inspector() {
   const tab = useAppStore((state) => state.inspectorTab);
@@ -56,8 +58,10 @@ export function Inspector() {
           <PhotoTab project={project} slot={primary} selectedIds={selection.ids} />
         ) : tab === 'look' ? (
           <LookTab project={project} primary={primary} selectedIds={selection.ids} />
-        ) : (
+        ) : tab === 'analysis' ? (
           <AnalysisPanel project={project} />
+        ) : (
+          <TargetPanel project={project} />
         ))}
     </aside>
   );

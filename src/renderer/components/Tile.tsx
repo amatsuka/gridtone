@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { Slot } from '@core/project/types';
 import { proxyUrl } from '@shared/cache';
 import type { AssetStatus } from '@shared/ipc';
+import { targetCss } from '../pattern';
 
 /** Заливка DOM-слоя в режимах 5 и 7 (ADR 0012, 0020): закрывает фото на холсте. */
 export interface TileOverlay {
@@ -33,8 +34,9 @@ export interface TilePlan {
 }
 
 /**
- * Плитка сетки. Само фото рисует GridCanvas под ней; плитка отвечает за заглушку, номер, бейджи,
- * пометки статуса и номер публикации, рамку выделения. Клики и перетаскивание ловит сетка (useTileDrag).
+ * Плитка сетки. Само фото рисует GridCanvas под ней; плитка отвечает за заглушку (у пустой позиции с целью —
+ * образец цели), номер, бейджи, пометки статуса и номер публикации, рамку выделения. Клики и перетаскивание
+ * ловит сетка (useTileDrag).
  * Когда холст нарисовал фото, GridRenderer ставит плитке data-rendered.
  * Без WebGL фото показывается картинкой — без коррекции и кадра.
  */
@@ -66,7 +68,7 @@ export const Tile = memo(function Tile({
   pin: boolean;
   belowPublished: boolean;
 }) {
-  const { assetId } = slot;
+  const { assetId, target } = slot;
   const original = status?.original ?? 'ok';
   const ready = assetId !== undefined && status?.proxy === 'ready';
   const empty = assetId === undefined;
@@ -97,7 +99,19 @@ export const Tile = memo(function Tile({
         />
       )}
       {empty ? (
-        <div className="tile-placeholder tile-empty-label">Пусто</div>
+        // Пустая позиция с целью — образец цели: сюда нужен пост такого цвета (ADR 0023). В режиме 1 его нет.
+        <div
+          className={`tile-placeholder tile-empty-label${target ? ' tile-target' : ''}`}
+          data-testid={target ? 'tile-target' : undefined}
+          data-l={target?.L}
+          data-hue={target?.hue}
+          data-chroma={target?.chroma}
+          style={target ? { backgroundColor: targetCss(target), color: target.L > 0.62 ? '#111' : '#eee' } : undefined}
+          title={target ? `Цель позиции: L ${target.L.toFixed(2)}${target.hue === undefined ? '' : `, тон ${Math.round(target.hue)}°`}` : undefined}
+        >
+          <span>Пусто</span>
+          {target && <span className="tile-target-l">цель L {target.L.toFixed(2)}</span>}
+        </div>
       ) : (
         !ready && <div className="tile-placeholder">{status?.proxy === 'pending' ? 'Готовим превью…' : 'Нет превью'}</div>
       )}

@@ -1,13 +1,14 @@
 // Поправки выбросов для раздела «Выбросы» вкладки «Анализ» (docs/decisions/0021-fixes.md). Поправку считает
 // findFix из core во втором экземпляре воркера метрик: метрики после правки не ждут поиска. Просятся они только
 // по свежим признакам всей сетки — иначе ожидание посчитано по прежним правкам — и только для неопубликованных
-// выбросов, пока открыта вкладка «Анализ». Кэш — по ключу метрик слота и цели поправки.
+// выбросов, пока открыта вкладка «Анализ» или «Цель» (поправки к цели — 5г). Кэш — по ключу метрик слота и цели
+// поправки.
 // Поправки — производные данные: в проект пишет только «Применить» (applyTileFix в commands.ts).
 import { create } from 'zustand';
 import type { FixTarget, TileFix } from '@core/harmony/fixes';
 import { gridAnalysis } from './analysis';
 import { useLutStore } from './luts';
-import { slotRequests, useMetricsStore } from './metrics';
+import { analysisTab, slotRequests, useMetricsStore } from './metrics';
 import { useAppStore } from './store';
 import type { FixRequest, MetricsResponse, WorkerLut } from './workers/protocol';
 
@@ -76,7 +77,7 @@ export function connectFixes(): () => void {
   const run = () => {
     const { snapshot, showOriginal, inspectorTab } = useAppStore.getState();
     wanted = new Map();
-    if (!snapshot || showOriginal || inspectorTab !== 'analysis') return publish();
+    if (!snapshot || showOriginal || !analysisTab(inspectorTab)) return publish();
     const requests = slotRequests(snapshot, useLutStore.getState().byId, false);
     const { bySlot, keys } = useMetricsStore.getState();
     // Ожидание зависит от всех плиток: пока чьи-то признаки не для нынешних правок, поправки не просим.

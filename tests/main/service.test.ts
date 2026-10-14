@@ -16,6 +16,9 @@ import type {
   ProjectStatus,
 } from '@shared/ipc';
 import { writeCube } from '@core/lut/cube';
+import { DEFAULT_LEVELS } from '@core/pattern/levels';
+import { targetAt, targetsAgree } from '@core/pattern/pattern';
+import { stringPattern } from '@core/pattern/string';
 import { lutFile, proxyFile } from '../../src/main/project/paths';
 import { sepiaLut } from '../golden/luts';
 import { ProjectService, type IndexerPort } from '../../src/main/project/service';
@@ -251,6 +254,39 @@ describe('правки из renderer', () => {
     expect(saved.slots.map((slot) => slot.assetId)).toEqual(['bbbbbbbbbbbbbbbb', 'aaaaaaaaaaaaaaaa']);
     expect(saved.slots[0]?.lookId).toBe('look-1');
     expect(saved.looks).toEqual([look]);
+  });
+
+  test('паттерн из renderer: импорт дописывает слотам цели их позиций (ADR 0023)', async () => {
+    const dir = join(root, 'p');
+    await projectWithPhoto(dir);
+    const parsed = stringPattern('LDL/DLD', DEFAULT_LEVELS);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const { pattern } = parsed;
+    service.applyPatches({
+      dir,
+      seq: 1,
+      patches: [
+        { op: 'add', path: ['pattern'], value: pattern },
+        { op: 'add', path: ['slots', 0, 'target'], value: targetAt(pattern, 0, 0) },
+      ],
+    });
+    service.importFiles(['/ph/b.jpg', '/ph/c.jpg']);
+    const { job, reply } = indexer.last();
+    reply({ type: 'item', jobId: job.jobId, index: 0, ok: true, asset: asset('/ph/b.jpg', 'bbbbbbbbbbbbbbbb') });
+    reply({ type: 'item', jobId: job.jobId, index: 1, ok: true, asset: asset('/ph/c.jpg', 'cccccccccccccccc') });
+    const slots = service.snapshot()?.project.slots ?? [];
+    expect(slots.map((slot) => slot.target?.L)).toEqual([0.8, 0.44, 0.8]);
+    expect(targetsAgree(slots, pattern, 0)).toBe(true);
+
+    await service.close();
+    const saved = parseProject(await readFile(join(dir, 'project.json'), 'utf8'));
+    expect(saved.pattern).toEqual(pattern);
+    expect(saved.slots.map((slot) => slot.target)).toEqual([0, 1, 2].map((i) => targetAt(pattern, i, 0)));
+  });
+
+  test('без паттерна импорт целей не ставит', async () => {
+    await projectWithPhoto(join(root, 'p'));
+    expect(service.snapshot()?.project.slots.map((slot) => 'target' in slot)).toEqual([false]);
   });
 
   test('снимок после изменения в main несёт номер последнего применённого пакета', async () => {

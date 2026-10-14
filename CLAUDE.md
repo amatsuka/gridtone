@@ -48,6 +48,10 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
   (renderer/analysis.ts). Анализ — производные данные, в проект и историю не пишется (ADR 0018).
   Поправки выбросов — findFix (core/harmony/fixes.ts, ADR 0021): поиск одного ползунка через весь конвейер
   плитки; «Применить» — applyTileFix, одна правка editProject; «заменить» в проект не пишется.
+- Цели позиций — только из паттерна через core/pattern/pattern.ts (ADR 0023): slot.target — клетка паттерна позиции,
+  у закреплённых цели нет; всё, что сдвигает позиции (rewriteSlots, setPinned, импорт в main), пересчитывает цели
+  в той же правке через withPatternTargets / positionTarget, а main отвергает цели, не согласованные с паттерном.
+  postingMode считает только postingModeOf; параметры генератора и черновик строки в проект не пишутся.
 - LUT запекается только через core/lut/bake.ts — узлы из applyBaked, без шейдера (ADR 0014).
   Экспорт пишет только в новую подпапку и с флагом wx: существующие файлы не перезаписываются.
 - Посты и `Сетка.png` режутся из оригинала, сверенного по хэшу, по feedFrameTransform / gridWindowTransform;

@@ -2,12 +2,14 @@
 // не зависит. Проверяется не путь, а результат пакета (docs/decisions/0010-patch-invariants.md):
 // renderer переставляет слоты, правит их коррекцию, кадр и образ, создаёт и удаляет образы, назначает
 // и снимает LUT из реестра (docs/decisions/0015-lut-import.md), ставит статус «опубликован», вставляет и
-// удаляет пустые позиции и меняет число закреплённых (docs/decisions/0022-statuses-empty-pinned.md).
-// Оригиналы, фото в позициях и сам реестр LUT остаются за main.
+// удаляет пустые позиции и меняет число закреплённых (docs/decisions/0022-statuses-empty-pinned.md),
+// пишет паттерн и цели позиций (docs/decisions/0023-patterns.md). Оригиналы, фото в позициях и сам реестр LUT
+// остаются за main.
+import { postingModeOf, targetsAgree } from '../pattern/pattern';
 import { createSlot } from './defaults';
 import { cloneJson, isRecord, sameJson, sameJsonExcept } from './json';
-import type { Look, Project, Slot } from './types';
-import { isValidAdjust, isValidCrop, isValidGridChange, isValidLook, isValidSlotId } from './validate';
+import type { Look, Pattern, Project, Slot } from './types';
+import { isValidAdjust, isValidCrop, isValidGridChange, isValidLook, isValidPattern, isValidSlotId, isValidTarget } from './validate';
 
 export interface ProjectPatch {
   op: 'replace' | 'add' | 'remove';
@@ -20,8 +22,8 @@ export class PatchError extends Error {
 }
 
 /** Поля слота, которые меняет renderer. Остальные после пакета должны остаться прежними. */
-const EDITABLE_SLOT_FIELDS: readonly string[] = ['adjust', 'crop', 'lookId', 'state'];
-const ROOTS: readonly unknown[] = ['slots', 'looks', 'grid'];
+const EDITABLE_SLOT_FIELDS: readonly string[] = ['adjust', 'crop', 'lookId', 'state', 'target'];
+const ROOTS: readonly unknown[] = ['slots', 'looks', 'grid', 'pattern'];
 /** Статусы позиции с фото: renderer переключает только их (ADR 0022). */
 const PHOTO_STATES: readonly unknown[] = ['planned', 'published'];
 const OPS: readonly unknown[] = ['replace', 'add', 'remove'];
@@ -32,6 +34,7 @@ interface Draft {
   slots: unknown;
   looks: unknown;
   grid: unknown;
+  pattern: unknown;
 }
 
 /**
@@ -45,16 +48,19 @@ export function applyProjectPatches(project: Project, patches: readonly ProjectP
     slots: touches('slots') ? cloneJson(project.slots) : project.slots,
     looks: touches('looks') ? cloneJson(project.looks) : project.looks,
     grid: touches('grid') ? cloneJson(project.grid) : project.grid,
+    pattern: touches('pattern') && project.pattern !== undefined ? cloneJson(project.pattern) : project.pattern,
   };
   try {
     for (const patch of patches) applyOne(draft, patch);
   } catch (err) {
     throw err instanceof PatchError ? err : new PatchError(err instanceof Error ? err.message : String(err));
   }
-  const { slots, looks, grid } = checkInvariants(project, draft);
+  const { slots, looks, grid, pattern } = checkInvariants(project, draft);
   project.slots = slots;
   project.looks = looks;
   project.grid = grid;
+  if (pattern) project.pattern = pattern;
+  else delete project.pattern;
 }
 
 function checkPath({ op, path }: ProjectPatch): void {
@@ -101,10 +107,25 @@ function isIndex(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
-/** Инварианты ADR 0010 и 0022. Проверяется только изменившееся: старое значение не блокирует новые правки. */
-function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks: Look[]; grid: Project['grid'] } {
+interface Checked {
+  slots: Slot[];
+  looks: Look[];
+  grid: Project['grid'];
+  pattern: Pattern | undefined;
+}
+
+/** Инварианты ADR 0010, 0022 и 0023. Проверяется только изменившееся: старое значение не блокирует новые правки. */
+function checkInvariants(before: Project, after: Draft): Checked {
   if (after.grid !== before.grid && !isValidGridChange(before.grid, after.grid)) {
     throw new PatchError('в настройках сетки renderer меняет только число закреплённых, 0–3');
+  }
+  const patternChanged = !sameJson(before.pattern, after.pattern);
+  if (patternChanged && after.pattern !== undefined) {
+    if (!isValidPattern(after.pattern)) throw new PatchError('некорректный паттерн');
+    // Режим публикации считает core при записи паттерна: renderer не может его объявить.
+    if (after.pattern.postingMode !== postingModeOf(after.pattern.cells)) {
+      throw new PatchError('режим публикации паттерна не совпадает с вычисленным');
+    }
   }
 
   if (!Array.isArray(after.looks)) throw new PatchError('список образов должен быть массивом');
@@ -127,6 +148,7 @@ function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks:
   if (!Array.isArray(after.slots)) throw new PatchError('список слотов должен быть массивом');
   const slotsBefore = new Map(before.slots.map((slot) => [slot.id, slot]));
   const seen = new Set<string>();
+  let targetsChanged = false;
   for (const slot of after.slots as unknown[]) {
     const id = isRecord(slot) ? slot['id'] : undefined;
     if (!isRecord(slot) || typeof id !== 'string') throw new PatchError('слот без id');
@@ -134,15 +156,24 @@ function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks:
     seen.add(id);
     const prev = slotsBefore.get(id);
     if (!prev) {
-      // Новый слот — только пустая позиция со значениями по умолчанию: фото в позицию ставит main.
-      if (!isValidSlotId(id) || !sameJson(slot, createSlot(id))) {
+      // Новый слот — только пустая позиция со значениями по умолчанию, кроме цели своей позиции: фото ставит main.
+      if (!isValidSlotId(id) || !sameJsonExcept(slot, createSlot(id) as unknown as Record<string, unknown>, ['target'])) {
         throw new PatchError(`новый слот ${id}: renderer добавляет только пустую позицию по умолчанию`);
       }
+      if (Object.hasOwn(slot, 'target') && !isValidTarget(slot['target'])) throw new PatchError(`некорректная цель слота ${id}`);
+      targetsChanged = true;
       continue;
     }
     if (!sameJsonExcept(prev as unknown as Record<string, unknown>, slot, EDITABLE_SLOT_FIELDS)) {
-      throw new PatchError(`у слота ${id} renderer меняет только коррекцию, кадр, образ и статус`);
+      throw new PatchError(`у слота ${id} renderer меняет только коррекцию, кадр, образ, статус и цель`);
     }
+    // Цель — свойство позиции (ADR 0023): у любой позиции, в том числе опубликованной и пустой, она следует паттерну.
+    const targetChanged = !sameJson(prev.target, slot['target']);
+    const hasTarget = Object.hasOwn(slot, 'target');
+    if (hasTarget && (targetChanged || slot['target'] === undefined) && !isValidTarget(slot['target'])) {
+      throw new PatchError(`некорректная цель слота ${id}`);
+    }
+    if (targetChanged) targetsChanged = true;
     checkSlotState(prev, slot);
     // Опубликованный пост и пустая позиция не правятся: статус переключается отдельной правкой.
     const fixed = prev.assetId === undefined || prev.state === 'published' || slot['state'] === 'published';
@@ -165,7 +196,16 @@ function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks:
   for (const prev of before.slots) {
     if (!seen.has(prev.id) && prev.assetId !== undefined) throw new PatchError(`фото из сетки убирает только main (слот ${prev.id})`);
   }
-  return { slots: after.slots as Slot[], looks: after.looks as Look[], grid: after.grid as Project['grid'] };
+  const slots = after.slots as Slot[];
+  const grid = after.grid as Project['grid'];
+  const pattern = after.pattern as Pattern | undefined;
+  // Цели — проекция паттерна на позиции: после всего, что их сдвигает, они обязаны совпасть с ним (ADR 0023).
+  const orderChanged = slots.length !== before.slots.length || slots.some((slot, i) => slot.id !== before.slots[i]?.id);
+  const moved = patternChanged || grid.pinned !== before.grid.pinned || orderChanged || targetsChanged;
+  if (pattern && moved && !targetsAgree(slots, pattern, grid.pinned)) {
+    throw new PatchError('цели позиций не согласованы с паттерном');
+  }
+  return { slots, looks: after.looks as Look[], grid, pattern };
 }
 
 /** Статус: renderer переключает «запланирован» ↔ «опубликован» только у позиции с фото. */

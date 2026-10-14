@@ -2,14 +2,18 @@
 // Проект меняется только через editProject — так каждое действие попадает в историю (ADR 0011).
 import { original } from 'immer';
 import { applyFix, type TileFix } from '@core/harmony/fixes';
+import type { GeneratorParams } from '@core/pattern/generator';
+import { clearTargets, targetsAgree, withPatternTargets } from '@core/pattern/pattern';
 import { copyAdjustGroups, type AdjustGroup } from '@core/project/adjustGroups';
+import { cloneJson, sameJson } from '@core/project/json';
 import { assignLook, createLook, duplicateLook, nextLookName, removeLook } from '@core/project/looks';
 import { moveSlots, shiftSlots } from '@core/project/order';
 import { assignSlots, insertEmptySlots, isEmptySlot, removeEmptySlots, setPublished } from '@core/project/slots';
-import type { Adjust, Crop, Project, Slot } from '@core/project/types';
+import type { Adjust, Crop, Pattern, Project, Slot } from '@core/project/types';
 import { isValidLookName, PINNED_MAX } from '@core/project/validate';
 import type { MenuCommand } from '@shared/ipc';
 import { isViewMode, type ViewMode } from '@shared/view';
+import type { PatternDraft } from './pattern';
 import { clickSelection, EMPTY_SELECTION, selectAll } from './selection';
 import { api, editProject, redo, undo, useAppStore, type EditorTab, type InspectorTab } from './store';
 
@@ -60,11 +64,14 @@ export function setInspectorTab(tab: InspectorTab): void {
 /**
  * Переписывает порядок и состав слотов. Патчи — `replace slots[i]` только для изменившихся позиций и add или
  * remove в хвосте, а не весь массив: иначе отмена после импорта вернула бы массив без новых слотов (ADR 0011, 0022).
+ * Цели — свойство позиции (ADR 0023): в той же правке каждая позиция получает свою клетку паттерна, а без
+ * паттерна — свою прежнюю цель. Одна запись истории — и порядок, и цели.
  */
 function rewriteSlots(arrange: (slots: readonly Slot[], pinned: number) => Slot[]): void {
   editProject((draft) => {
     const base = original(draft.slots) as Slot[];
-    assignSlots(draft.slots, base, arrange(base, draft.grid.pinned));
+    const { pattern, grid } = original(draft) as Project;
+    assignSlots(draft.slots, base, withPatternTargets(arrange(base, grid.pinned), pattern, grid.pinned, base));
   });
 }
 
@@ -106,11 +113,51 @@ export function removeSelectedEmpty(): void {
   rewriteSlots((slots) => removeEmptySlots(slots, ids));
 }
 
-/** «Закреплено: 0–3» в тулбаре: первые n позиций — закреплённые посты, вне ленты и анализа. */
+/**
+ * «Закреплено: 0–3» в тулбаре: первые n позиций — закреплённые посты, вне ленты и анализа. Закреплённые цели
+ * не получают, откреплённые получают свою клетку паттерна — в той же записи истории (ADR 0023).
+ */
 export function setPinned(n: number): void {
   if (!Number.isInteger(n) || n < 0 || n > PINNED_MAX) return;
   editProject((draft) => {
-    if (draft.grid.pinned !== n) draft.grid.pinned = n as Project['grid']['pinned'];
+    if (draft.grid.pinned === n) return;
+    draft.grid.pinned = n as Project['grid']['pinned'];
+    const base = original(draft.slots) as Slot[];
+    assignSlots(draft.slots, base, withPatternTargets(base, (original(draft) as Project).pattern, n, base));
+  });
+}
+
+// ─── Паттерн и цели позиций (docs/decisions/0023-patterns.md) ─────────────────
+
+/** Черновик паттерна во вкладке «Цель» — состояние интерфейса, в проект не пишется. */
+export function editPatternDraft(change: Partial<PatternDraft>): void {
+  useAppStore.setState((state) => ({ patternDraft: { ...state.patternDraft, ...change } }));
+}
+
+export function editGeneratorParams(change: Partial<GeneratorParams>): void {
+  useAppStore.setState((state) => ({
+    patternDraft: { ...state.patternDraft, generator: { ...state.patternDraft.generator, ...change } },
+  }));
+}
+
+/** «Применить к сетке»: паттерн и цели всех позиций — одна запись истории. Тот же паттерн повторно ничего не пишет. */
+export function applyPatternToGrid(pattern: Pattern): void {
+  const current = project();
+  if (!current) return;
+  if (sameJson(current.pattern, pattern) && targetsAgree(current.slots, pattern, current.grid.pinned)) return;
+  editProject((draft) => {
+    draft.pattern = cloneJson(pattern);
+    const base = original(draft.slots) as Slot[];
+    assignSlots(draft.slots, base, withPatternTargets(base, pattern, draft.grid.pinned, base));
+  });
+}
+
+/** «Убрать цели»: ни паттерна, ни целей у позиций — режим 7 и выбросы снова сверяют плитки с сеткой. */
+export function clearPattern(): void {
+  editProject((draft) => {
+    if (draft.pattern) delete draft.pattern;
+    const base = original(draft.slots) as Slot[];
+    assignSlots(draft.slots, base, clearTargets(base));
   });
 }
 

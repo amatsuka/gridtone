@@ -1,11 +1,14 @@
-import { enablePatches, produceWithPatches } from 'immer';
+import { enablePatches, original, produceWithPatches } from 'immer';
 import { describe, expect, test } from 'vitest';
 import { createAdjust, createProject, createSlot } from '@core/project/defaults';
 import { assignLook, createLook, removeLook } from '@core/project/looks';
 import { moveSlots } from '@core/project/order';
 import { applyProjectPatches, PatchError, type ProjectPatch } from '@core/project/patch';
 import { assignSlots, insertEmptySlots, removeEmptySlots, setPublished } from '@core/project/slots';
-import type { Project } from '@core/project/types';
+import type { Pattern, Project, Slot } from '@core/project/types';
+import { DEFAULT_LEVELS } from '@core/pattern/levels';
+import { clearTargets, targetAt, withPatternTargets } from '@core/pattern/pattern';
+import { stringPattern } from '@core/pattern/string';
 import { CURVE_MAX_POINTS, SLOT_ID_MAX } from '@core/project/validate';
 
 enablePatches();
@@ -443,5 +446,152 @@ describe('инварианты: статусы, пустые позиции и �
     expectRejected(grid(), [{ op: 'remove', path: ['grid', 'pinned'] }]);
     expectRejected(grid(), [{ op: 'replace', path: ['grid'], value: { ratio: '3:4', columns: 3, pinned: 1, extra: 1 } }]);
     expectRejected(grid(), [{ op: 'replace', path: ['grid', '__proto__', 'pinned'], value: 1 }]);
+  });
+});
+
+describe('инварианты: паттерн и цели позиций (ADR 0023)', () => {
+  const A = 'aaaaaaaaaaaaaaaa';
+  const checker = () => stringPattern('LDL/DLD', DEFAULT_LEVELS);
+  const pattern = (): Pattern => {
+    const result = checker();
+    if (!result.ok) throw new Error(result.error);
+    return result.pattern;
+  };
+  /** Четыре фото и пустая позиция, без паттерна. */
+  function grid(pinned: Project['grid']['pinned'] = 0): Project {
+    const project = sampleProject();
+    project.slots = [createSlot('p1', A), createSlot('p2', A), createSlot('p3', A), createSlot('p4', A), createSlot('e1')];
+    project.grid.pinned = pinned;
+    return project;
+  }
+  /** То же с паттерном LDL/DLD и согласованными целями. */
+  function withPattern(pinned: Project['grid']['pinned'] = 0): Project {
+    const project = grid(pinned);
+    project.pattern = pattern();
+    project.slots = withPatternTargets(project.slots, project.pattern, pinned);
+    return project;
+  }
+  const apply = (draft: Project, p: Pattern | undefined) => {
+    const base = original(draft.slots) as Slot[];
+    if (p) draft.pattern = p;
+    else delete draft.pattern;
+    assignSlots(draft.slots, base, p ? withPatternTargets(base, p, draft.grid.pinned) : clearTargets(base));
+  };
+
+  test('«Применить к сетке» — паттерн и цели всех позиций одним пакетом; отмена и «Убрать цели»', () => {
+    const base = grid(1);
+    const [applied, patches, inverse] = produceWithPatches(base, (draft) => apply(draft, pattern()));
+    const main = clone(base);
+    applyProjectPatches(main, patches as ProjectPatch[]);
+    expect(main).toEqual(applied);
+    expect(main.pattern).toEqual(pattern());
+    expect(main.slots.map((s) => s.target?.L ?? null)).toEqual([null, 0.44, 0.8, 0.44, 0.8]);
+    applyProjectPatches(main, inverse as ProjectPatch[]);
+    expect(main).toEqual(base);
+    expect('pattern' in main).toBe(false);
+    const cleared = roundTrip(applied, (draft) => apply(draft, undefined));
+    expect('pattern' in cleared).toBe(false);
+    expect(cleared.slots.some((s) => 'target' in s)).toBe(false);
+  });
+
+  test('цели должны быть согласованы с паттерном: ни лишних, ни пропущенных, ни чужих', () => {
+    expectRejected(grid(), [{ op: 'add', path: ['pattern'], value: pattern() }]);
+    const project = withPattern(1);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 1, 'target', 'L'], value: 0.5 }]);
+    expectRejected(project, [{ op: 'remove', path: ['slots', 2, 'target'] }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 0, 'target'], value: pattern().cells[0] }]);
+    // Перестановка без пересчёта целей: цель уехала вместе с фото.
+    expectRejected(project, [
+      { op: 'replace', path: ['slots', 1], value: project.slots[2] },
+      { op: 'replace', path: ['slots', 2], value: project.slots[1] },
+    ]);
+    // Смена закреплённых без пересчёта.
+    expectRejected(project, [{ op: 'replace', path: ['grid', 'pinned'], value: 0 }]);
+    // Смена паттерна без пересчёта.
+    expectRejected(project, [{ op: 'replace', path: ['pattern', 'cells', 1, 'L'], value: 0.3 }]);
+  });
+
+  test('перестановка, пустые позиции и закреплённые с пересчётом целей проходят', () => {
+    const base = withPattern(1);
+    const moved = roundTrip(base, (draft) =>
+      assignSlots(draft.slots, base.slots, withPatternTargets(moveSlots(base.slots, ['p2'], 3, 1), base.pattern, 1, base.slots)),
+    );
+    expect(moved.slots.map((s) => s.id)).toEqual(['p1', 'p3', 'p4', 'p2', 'e1']);
+    const inserted = roundTrip(base, (draft) =>
+      assignSlots(draft.slots, base.slots, withPatternTargets(insertEmptySlots(base.slots, ['n1', 'n2'], 1), base.pattern, 1, base.slots)),
+    );
+    expect(inserted.slots[1]).toEqual({ ...createSlot('n1'), target: targetAt(base.pattern!, 1, 1) });
+    roundTrip(inserted, (draft) =>
+      assignSlots(draft.slots, inserted.slots, withPatternTargets(removeEmptySlots(inserted.slots, ['n1', 'e1']), base.pattern, 1, inserted.slots)),
+    );
+    roundTrip(base, (draft) => {
+      draft.grid.pinned = 3;
+      assignSlots(draft.slots, base.slots, withPatternTargets(base.slots, base.pattern, 3, base.slots));
+    });
+  });
+
+  test('новый слот — пустая позиция по умолчанию, кроме цели своей позиции', () => {
+    const project = withPattern();
+    const target = targetAt(project.pattern!, 5, 0);
+    applyProjectPatches(clone(project), [{ op: 'add', path: ['slots', 5], value: { ...createSlot('n'), target } }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 5], value: { ...createSlot('n'), target: targetAt(project.pattern!, 4, 0) } }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 5], value: createSlot('n') }]);
+    // Без паттерна — цель любой корректной формы (renderer переносит цели позиций).
+    applyProjectPatches(grid(), [{ op: 'add', path: ['slots', 5], value: { ...createSlot('n'), target } }]);
+    expectRejected(grid(), [{ op: 'add', path: ['slots', 5], value: { ...createSlot('n'), target: { ...target, L: 2 } } }]);
+  });
+
+  test('форма паттерна: источник, период, клетки, режим публикации — вычисленный', () => {
+    const p = pattern();
+    const bad: unknown[] = [
+      { ...p, postingMode: 'batch' },
+      { ...p, periodRows: 3 },
+      { ...p, periodRows: 0, cells: [] },
+      { ...p, source: 'magic' },
+      { ...p, extra: 1 },
+      { ...p, cells: [...p.cells.slice(0, 5), { ...p.cells[5], L: -0.1 }] },
+      { ...p, cells: [...p.cells.slice(0, 5), { ...p.cells[5], hard: 'yes' }] },
+      { ...p, cells: [...p.cells.slice(0, 5), { ...p.cells[5], tolerance: { L: 0.06 } }] },
+      null,
+      [],
+    ];
+    // Цели согласованы с клетками p: отказ — из-за формы паттерна, а не из-за целей.
+    for (const value of bad) expectRejected(withPattern(), [{ op: 'replace', path: ['pattern'], value }]);
+    applyProjectPatches(withPattern(), [{ op: 'replace', path: ['pattern', 'source'], value: 'generator' }]);
+    expectRejected(withPattern(), [{ op: 'replace', path: ['pattern', '__proto__', 'source'], value: 'string' }]);
+    expectRejected(grid(), [{ op: 'replace', path: ['pattern', 'source'], value: 'string' }]);
+  });
+
+  test('форма цели проверяется и без паттерна', () => {
+    const target = { L: 0.5, tolerance: { L: 0.06, hue: 15, chroma: 0.02 }, hard: true };
+    applyProjectPatches(grid(), [{ op: 'add', path: ['slots', 0, 'target'], value: target }]);
+    applyProjectPatches(grid(), [{ op: 'add', path: ['slots', 4, 'target'], value: { ...target, hue: 120, chroma: 0.05 } }]);
+    for (const value of [
+      { ...target, L: 1.5 },
+      { ...target, hue: 360 },
+      { ...target, chroma: -0.01 },
+      { ...target, extra: 1 },
+      { ...target, tolerance: { L: 0.06, hue: 15 } },
+      { ...target, tolerance: { L: -1, hue: 15, chroma: 0.02 } },
+      { L: 0.5, hard: true },
+      'L',
+    ]) {
+      expectRejected(grid(), [{ op: 'add', path: ['slots', 0, 'target'], value }]);
+    }
+  });
+
+  test('цель опубликованной и пустой позиции — тоже цель позиции: меняется вместе с паттерном', () => {
+    const base = grid();
+    base.slots[1]!.state = 'published';
+    const applied = roundTrip(base, (draft) => apply(draft, pattern()));
+    expect(applied.slots[1]?.target?.L).toBe(0.44);
+    expect(applied.slots[4]?.target?.L).toBe(0.8);
+  });
+
+  test('старые несогласованные цели не мешают правкам, которые цели не трогают', () => {
+    const project = withPattern();
+    project.slots[0]!.target = { ...project.slots[0]!.target!, L: 0.1 };
+    applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 1 }]);
+    expect(project.slots[0]?.adjust.exposure).toBe(1);
   });
 });

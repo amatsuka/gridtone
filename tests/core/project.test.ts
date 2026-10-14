@@ -40,7 +40,9 @@ function sampleProject(): Project {
     importedAt: '2026-10-08T12:00:00.000Z',
   };
   project.looks.push({ id: 'look-2', name: 'Сепия', adjust: createAdjust(), importedLut: 'fedcba9876543210' });
-  project.pattern = { source: 'generator', periodRows: 2, postingMode: 'batch', cells: [] };
+  // Полосы по строкам: L и D. Цели слотов с паттерном здесь не согласованы — parseProject проверяет только форму.
+  const cell = (L: number) => ({ L, tolerance: { L: 0.06, hue: 15, chroma: 0.02 }, hard: true });
+  project.pattern = { source: 'generator', periodRows: 2, postingMode: 'batch', cells: [0.8, 0.8, 0.8, 0.44, 0.44, 0.44].map(cell) };
   return project;
 }
 
@@ -142,6 +144,26 @@ describe('project.json', () => {
     Object.assign(ref, patch);
     for (const [key, value] of Object.entries(patch)) if (value === undefined) delete ref[key];
     expect(() => parseProject(JSON.stringify(project))).toThrow(/некорректный LUT/);
+  });
+
+  test('паттерн и цели: проверяется форма (ADR 0023)', () => {
+    const withoutPattern = sampleProject();
+    delete withoutPattern.pattern;
+    expect(parseProject(serializeProject(withoutPattern))).toStrictEqual(withoutPattern);
+
+    const pattern = sampleProject();
+    pattern.pattern!.periodRows = 3;
+    expect(() => parseProject(serializeProject(pattern))).toThrow(/некорректный паттерн/);
+    const source = JSON.parse(serializeProject(sampleProject())) as { pattern: Record<string, unknown> };
+    source.pattern['source'] = 'magic';
+    expect(() => parseProject(JSON.stringify(source))).toThrow(/некорректный паттерн/);
+
+    const target = sampleProject();
+    target.slots[0]!.target = { ...target.slots[0]!.target!, L: 1.2 };
+    expect(() => parseProject(serializeProject(target))).toThrow(/некорректная цель слота slot-1/);
+    const extra = JSON.parse(serializeProject(sampleProject())) as { slots: Record<string, unknown>[] };
+    extra.slots[0]!['target'] = { L: 0.5, hard: true };
+    expect(() => parseProject(JSON.stringify(extra))).toThrow(/некорректная цель/);
   });
 
   test('отклоняет ассет, чей ключ не совпадает с id', () => {

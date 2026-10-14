@@ -31,9 +31,14 @@ interface MetricsState {
 
 export const useMetricsStore = create<MetricsState>()(() => ({ bySlot: {}, keys: {}, progress: { done: 0, total: 0 } }));
 
-/** Метрики нужны режимам 5 и 7 и открытой вкладке «Анализ». */
+/** Вкладки, которым нужен анализ сетки и поправки: «Анализ» и «Цель» (ADR 0023). */
+export function analysisTab(tab: InspectorTab): boolean {
+  return tab === 'analysis' || tab === 'target';
+}
+
+/** Метрики нужны режимам 5 и 7 и открытым вкладкам «Анализ» и «Цель». */
 export function needsMetrics({ viewMode, inspectorTab }: { viewMode: ViewMode; inspectorTab: InspectorTab }): boolean {
-  return viewMode === 'dominant' || viewMode === 'deviation' || inspectorTab === 'analysis';
+  return viewMode === 'dominant' || viewMode === 'deviation' || analysisTab(inspectorTab);
 }
 
 /** Запрос метрик слота и LUT его образа, если он есть. */
