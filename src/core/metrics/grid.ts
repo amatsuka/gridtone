@@ -2,8 +2,10 @@
 // 3 × N, разброс L, контраст соседей, ритм, палитра сетки, точки колеса, гармония (ADR 0019), ожидания плиток
 // и выбросы (ADR 0020). Одна чистая функция над проектом и признаками плиток: её вызывают вкладка «Анализ»,
 // режим 7, тесты и скрипт `analyze`. Производные данные — в проект и историю не попадают.
+// Закреплённые позиции (grid.pinned) — вне ленты и вне анализа: на карте видны, в метриках — пропуски (ADR 0022).
 import { outliersOf, tileExpectations, type TileExpectation } from '../harmony/outliers';
 import { fitHarmony, type Harmony } from '../harmony/templates';
+import { isPinnedIndex } from '../project/slots';
 import type { Features, Project, Vec3 } from '../project/types';
 import { meanChroma, meanHue } from './features';
 import { weightedPalette, type PaletteEntry } from './palette';
@@ -20,6 +22,8 @@ export interface LumaCell {
   /** В позиции есть фото (в том числе опубликованное). */
   photo: boolean;
   published: boolean;
+  /** Закреплённая позиция: на карте видна, в ритм, медианы, гармонию, палитру и выбросы не входит (ADR 0022). */
+  pinned: boolean;
   /** Средняя L плитки; null — фото нет или признаки ещё не посчитаны. */
   L: number | null;
 }
@@ -49,7 +53,7 @@ export interface GridAnalysis {
   rows: number;
   /** Карта яркости: по позиции на слот, в порядке сетки. */
   cells: LumaCell[];
-  /** Позиций с фото. */
+  /** Позиций с фото в анализе — без закреплённых. */
   photos: number;
   /** Из них с посчитанными признаками. */
   measured: number;
@@ -66,7 +70,8 @@ export interface GridAnalysis {
 
 /**
  * Анализ сетки по признакам плиток (ключ — id слота). Опубликованные плитки входят как контекст.
- * Позиции без фото и без признаков — пропуски: в карте пустые, в метриках не участвуют.
+ * Позиции без фото и без признаков — пропуски: в карте пустые, в метриках не участвуют. Закреплённые —
+ * тоже пропуски, хотя на карте их L видна: позиции остальных плиток (классы ритма) от них не сдвигаются.
  */
 export function analyzeGrid(
   project: Pick<Project, 'grid' | 'slots'>,
@@ -83,24 +88,27 @@ export function analyzeGrid(
       slotId: slot.id,
       photo,
       published: slot.state === 'published',
+      pinned: isPinnedIndex(index, project.grid.pinned),
       L: f ? f.meanL : null,
     };
   });
-  const measured = cells.filter((cell) => cell.L !== null);
-  const values = cells.map((cell) => cell.L);
+  // Ячейки ленты — то, что анализируется; закреплённые в ней пропуски.
+  const feed = cells.map((cell) => (cell.pinned ? { ...cell, L: null } : cell));
+  const measured = feed.filter((cell) => cell.L !== null);
+  const values = feed.map((cell) => cell.L);
   const rhythm = detectRhythm(values, columns);
   const analysis: GridAnalysis = {
     columns,
     rows: Math.ceil(cells.length / columns),
     cells,
-    photos: cells.filter((cell) => cell.photo).length,
+    photos: feed.filter((cell) => cell.photo && !cell.pinned).length,
     measured: measured.length,
     metrics: null,
     expectations: [],
     outliers: [],
   };
   // Ритма нет, когда плиток с L меньше MIN_GRID_TILES: тогда нет и остальных метрик сетки.
-  if (!rhythm) return withExpectations(analysis, project, features);
+  if (!rhythm) return withExpectations(analysis, feed, project, features);
 
   const tiles = measured.map((cell) => features[cell.slotId] as Features);
   const wheel = measured.map((cell, i): WheelPoint => {
@@ -115,15 +123,17 @@ export function analyzeGrid(
     wheel,
     harmony: fitHarmony(wheel),
   };
-  return withExpectations(analysis, project, features);
+  return withExpectations(analysis, feed, project, features);
 }
 
+/** feed — карта ленты: у закреплённых L нет, поэтому ни ожидания, ни выброса у них нет. */
 function withExpectations(
   analysis: GridAnalysis,
+  feed: readonly LumaCell[],
   project: Pick<Project, 'grid' | 'slots'>,
   features: Readonly<Record<string, Features | undefined>>,
 ): GridAnalysis {
-  const expectations = tileExpectations(project, features, analysis.cells, analysis.metrics);
+  const expectations = tileExpectations(project, features, feed, analysis.metrics);
   return { ...analysis, expectations, outliers: outliersOf(expectations) };
 }
 

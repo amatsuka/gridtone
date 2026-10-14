@@ -27,16 +27,17 @@ describe('образы', () => {
     expect(nextLookName([createLook('a', 'Образ 1'), createLook('b', 'Образ 3')])).toBe('Образ 2');
   });
 
-  test('назначение и снятие; опубликованные посты не перекрашиваются', () => {
+  test('назначение и снятие; опубликованные посты не перекрашиваются, у пустой позиции образа нет', () => {
     const project = sample();
+    project.slots.push(createSlot('s4', 'aaaaaaaaaaaaaaaa'));
     project.slots[1]!.state = 'published';
-    assignLook(project, ['s1', 's2', 's3'], 'warm');
-    expect(project.slots.map((s) => s.lookId)).toEqual(['warm', undefined, 'warm']);
+    assignLook(project, ['s1', 's2', 's3', 's4'], 'warm');
+    expect(project.slots.map((s) => s.lookId)).toEqual(['warm', undefined, undefined, 'warm']);
     expect(lookUsage(project, 'warm')).toBe(2);
 
     assignLook(project, ['s1'], null);
     expect('lookId' in project.slots[0]!).toBe(false);
-    expect(project.slots[2]?.lookId).toBe('warm');
+    expect(project.slots[3]?.lookId).toBe('warm');
   });
 
   test('несуществующий образ не назначается', () => {
@@ -47,7 +48,7 @@ describe('образы', () => {
 
   test('удаление снимает образ с плиток', () => {
     const project = sample();
-    assignLook(project, ['s1', 's3'], 'warm');
+    assignLook(project, ['s1'], 'warm');
     assignLook(project, ['s2'], 'cold');
     removeLook(project, 'warm');
     expect(project.looks.map((l) => l.id)).toEqual(['cold']);

@@ -1,11 +1,13 @@
 // Патчи проекта из renderer (docs/decisions/0008-edit-flow.md). Формат — как у Immer, но core от Immer
 // не зависит. Проверяется не путь, а результат пакета (docs/decisions/0010-patch-invariants.md):
 // renderer переставляет слоты, правит их коррекцию, кадр и образ, создаёт и удаляет образы, назначает
-// и снимает LUT из реестра (docs/decisions/0015-lut-import.md). Оригиналы, состав сетки, статусы и сам
-// реестр LUT остаются за main.
+// и снимает LUT из реестра (docs/decisions/0015-lut-import.md), ставит статус «опубликован», вставляет и
+// удаляет пустые позиции и меняет число закреплённых (docs/decisions/0022-statuses-empty-pinned.md).
+// Оригиналы, фото в позициях и сам реестр LUT остаются за main.
+import { createSlot } from './defaults';
 import { cloneJson, isRecord, sameJson, sameJsonExcept } from './json';
 import type { Look, Project, Slot } from './types';
-import { isValidAdjust, isValidCrop, isValidLook } from './validate';
+import { isValidAdjust, isValidCrop, isValidGridChange, isValidLook, isValidSlotId } from './validate';
 
 export interface ProjectPatch {
   op: 'replace' | 'add' | 'remove';
@@ -18,8 +20,10 @@ export class PatchError extends Error {
 }
 
 /** Поля слота, которые меняет renderer. Остальные после пакета должны остаться прежними. */
-const EDITABLE_SLOT_FIELDS: readonly string[] = ['adjust', 'crop', 'lookId'];
-const ROOTS: readonly unknown[] = ['slots', 'looks'];
+const EDITABLE_SLOT_FIELDS: readonly string[] = ['adjust', 'crop', 'lookId', 'state'];
+const ROOTS: readonly unknown[] = ['slots', 'looks', 'grid'];
+/** Статусы позиции с фото: renderer переключает только их (ADR 0022). */
+const PHOTO_STATES: readonly unknown[] = ['planned', 'published'];
 const OPS: readonly unknown[] = ['replace', 'add', 'remove'];
 const FORBIDDEN_KEYS: readonly unknown[] = ['__proto__', 'constructor', 'prototype'];
 
@@ -27,11 +31,12 @@ const FORBIDDEN_KEYS: readonly unknown[] = ['__proto__', 'constructor', 'prototy
 interface Draft {
   slots: unknown;
   looks: unknown;
+  grid: unknown;
 }
 
 /**
- * Применяет пакет патчей к проекту. Пакет атомарен: он применяется к копии слотов и образов,
- * и если результат нарушает хоть один инвариант, проект не меняется и бросается PatchError.
+ * Применяет пакет патчей к проекту. Пакет атомарен: он применяется к копии слотов, образов и настроек
+ * сетки, и если результат нарушает хоть один инвариант, проект не меняется и бросается PatchError.
  */
 export function applyProjectPatches(project: Project, patches: readonly ProjectPatch[]): void {
   for (const patch of patches) checkPath(patch);
@@ -39,15 +44,17 @@ export function applyProjectPatches(project: Project, patches: readonly ProjectP
   const draft: Draft = {
     slots: touches('slots') ? cloneJson(project.slots) : project.slots,
     looks: touches('looks') ? cloneJson(project.looks) : project.looks,
+    grid: touches('grid') ? cloneJson(project.grid) : project.grid,
   };
   try {
     for (const patch of patches) applyOne(draft, patch);
   } catch (err) {
     throw err instanceof PatchError ? err : new PatchError(err instanceof Error ? err.message : String(err));
   }
-  const { slots, looks } = checkInvariants(project, draft);
+  const { slots, looks, grid } = checkInvariants(project, draft);
   project.slots = slots;
   project.looks = looks;
+  project.grid = grid;
 }
 
 function checkPath({ op, path }: ProjectPatch): void {
@@ -94,8 +101,12 @@ function isIndex(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
-/** Инварианты ADR 0010. Проверяется только изменившееся: старое значение не блокирует новые правки. */
-function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks: Look[] } {
+/** Инварианты ADR 0010 и 0022. Проверяется только изменившееся: старое значение не блокирует новые правки. */
+function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks: Look[]; grid: Project['grid'] } {
+  if (after.grid !== before.grid && !isValidGridChange(before.grid, after.grid)) {
+    throw new PatchError('в настройках сетки renderer меняет только число закреплённых, 0–3');
+  }
+
   if (!Array.isArray(after.looks)) throw new PatchError('список образов должен быть массивом');
   const lookIds = new Set<string>();
   const looksBefore = new Map(before.looks.map((look) => [look.id, look]));
@@ -113,30 +124,65 @@ function checkInvariants(before: Project, after: Draft): { slots: Slot[]; looks:
     }
   }
 
+  if (!Array.isArray(after.slots)) throw new PatchError('список слотов должен быть массивом');
   const slotsBefore = new Map(before.slots.map((slot) => [slot.id, slot]));
-  if (!Array.isArray(after.slots) || after.slots.length !== before.slots.length) {
-    throw new PatchError('состав сетки меняет только main');
-  }
   const seen = new Set<string>();
   for (const slot of after.slots as unknown[]) {
     const id = isRecord(slot) ? slot['id'] : undefined;
-    const prev = typeof id === 'string' ? slotsBefore.get(id) : undefined;
-    if (!isRecord(slot) || !prev || seen.has(prev.id)) throw new PatchError('состав сетки меняет только main');
-    seen.add(prev.id);
+    if (!isRecord(slot) || typeof id !== 'string') throw new PatchError('слот без id');
+    if (seen.has(id)) throw new PatchError(`повторяется слот ${id}`);
+    seen.add(id);
+    const prev = slotsBefore.get(id);
+    if (!prev) {
+      // Новый слот — только пустая позиция со значениями по умолчанию: фото в позицию ставит main.
+      if (!isValidSlotId(id) || !sameJson(slot, createSlot(id))) {
+        throw new PatchError(`новый слот ${id}: renderer добавляет только пустую позицию по умолчанию`);
+      }
+      continue;
+    }
     if (!sameJsonExcept(prev as unknown as Record<string, unknown>, slot, EDITABLE_SLOT_FIELDS)) {
-      throw new PatchError(`у слота ${prev.id} renderer меняет только коррекцию, кадр и образ`);
+      throw new PatchError(`у слота ${id} renderer меняет только коррекцию, кадр, образ и статус`);
     }
-    if (!sameJson(prev.adjust, slot['adjust']) && !isValidAdjust(slot['adjust'])) {
-      throw new PatchError(`некорректная коррекция слота ${prev.id}`);
+    checkSlotState(prev, slot);
+    // Опубликованный пост и пустая позиция не правятся: статус переключается отдельной правкой.
+    const fixed = prev.assetId === undefined || prev.state === 'published' || slot['state'] === 'published';
+    const adjustChanged = !sameJson(prev.adjust, slot['adjust']);
+    const cropChanged = !sameJson(prev.crop, slot['crop']);
+    if (fixed && (adjustChanged || cropChanged)) {
+      throw new PatchError(`слот ${id} опубликован или пуст: коррекция и кадр не меняются`);
     }
-    if (!sameJson(prev.crop, slot['crop']) && !isValidCrop(slot['crop'])) {
-      throw new PatchError(`некорректный кадр слота ${prev.id}`);
-    }
+    if (adjustChanged && !isValidAdjust(slot['adjust'])) throw new PatchError(`некорректная коррекция слота ${id}`);
+    if (cropChanged && !isValidCrop(slot['crop'])) throw new PatchError(`некорректный кадр слота ${id}`);
     // У всех слотов, а не только изменённых: удаление образа, на который ссылаются, тоже ловится здесь.
     const lookId = slot['lookId'];
     if (Object.hasOwn(slot, 'lookId') && !(typeof lookId === 'string' && lookIds.has(lookId))) {
-      throw new PatchError(`слот ${prev.id} ссылается на неизвестный образ`);
+      throw new PatchError(`слот ${id} ссылается на неизвестный образ`);
+    }
+    if (fixed && lookId !== prev.lookId && !followsLook(prev.lookId, lookId as string | undefined, lookIds, looksBefore)) {
+      throw new PatchError(`слот ${id} опубликован или пуст: образ уходит и возвращается только вместе с самим образом`);
     }
   }
-  return { slots: after.slots as Slot[], looks: after.looks as Look[] };
+  for (const prev of before.slots) {
+    if (!seen.has(prev.id) && prev.assetId !== undefined) throw new PatchError(`фото из сетки убирает только main (слот ${prev.id})`);
+  }
+  return { slots: after.slots as Slot[], looks: after.looks as Look[], grid: after.grid as Project['grid'] };
+}
+
+/** Статус: renderer переключает «запланирован» ↔ «опубликован» только у позиции с фото. */
+function checkSlotState(prev: Slot, slot: Record<string, unknown>): void {
+  const state = slot['state'];
+  if (state === prev.state) return;
+  if (prev.assetId === undefined || !PHOTO_STATES.includes(prev.state) || !PHOTO_STATES.includes(state)) {
+    throw new PatchError(`статус слота ${prev.id}: только «запланирован» ↔ «опубликован» у позиции с фото`);
+  }
+}
+
+/**
+ * Образ опубликованного поста или пустой позиции меняется только вслед за самим образом: снимается вместе
+ * с удалением образа и возвращается вместе с ним — отменой удаления.
+ */
+function followsLook(prev: string | undefined, next: string | undefined, lookIds: ReadonlySet<string>, looksBefore: ReadonlyMap<string, Look>): boolean {
+  if (prev !== undefined && next === undefined) return !lookIds.has(prev);
+  if (prev === undefined && next !== undefined) return !looksBefore.has(next);
+  return false;
 }

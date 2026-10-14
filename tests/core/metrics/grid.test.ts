@@ -191,3 +191,48 @@ describe('гармония в анализе сетки', () => {
     expect(analyzeGrid(project, byId).metrics?.harmony.kind).toBe('neutral');
   });
 });
+
+describe('закреплённые (ADR 0022)', () => {
+  it('закреплённая плитка любого цвета не меняет ритм, медианы, гармонию, палитру и выбросы; на карте видна с пометкой', () => {
+    const { project, byId } = grid('LDL/DLD/LDL/DLD');
+    // Цветная шахматка: светлые тёплые, тёмные холодные; плитка 5 на светлом месте темнее — выброс.
+    for (const [id, f] of Object.entries(byId)) {
+      const light = f.meanL > 0.5;
+      byId[id] = features([f.meanL, light ? 0.03 : -0.02, light ? 0.06 : -0.05]);
+    }
+    byId['s4'] = features([0.62, 0.03, 0.06]);
+    const pinned: Pick<Project, 'grid' | 'slots'> = { ...project, grid: { ...project.grid, pinned: 1 } };
+    const without = analyzeGrid(project, { ...byId, s0: undefined });
+    expect(without.outliers.map((o) => o.index)).toContain(4);
+    expect(without.metrics?.palette.length).toBeGreaterThan(1);
+
+    for (const lab of [
+      [0.1, 0.2, -0.1],
+      [0.95, -0.1, 0.1],
+      [0.8, 0.03, 0.06],
+    ] as Vec3[]) {
+      const analysis = analyzeGrid(pinned, { ...byId, s0: features(lab) });
+      expect(analysis.metrics).toEqual(without.metrics);
+      expect(analysis.expectations).toEqual(without.expectations);
+      expect(analysis.outliers).toEqual(without.outliers);
+      expect(analysis.measured).toBe(11);
+      expect(analysis.photos).toBe(11);
+      expect(analysis.cells[0]).toMatchObject({ index: 0, pinned: true, photo: true, L: lab[0] });
+      expect(analysis.cells.slice(1).every((cell) => !cell.pinned)).toBe(true);
+    }
+
+    // Цель закреплённой позиции не проверяется: закреплённые вне анализа.
+    const slots = pinned.slots.map((slot, i) => (i === 0 ? { ...slot, target: { L: 0.2, tolerance: { L: 0.06, hue: 15, chroma: 0.02 }, hard: true } } : slot));
+    const withTarget = analyzeGrid({ ...pinned, slots }, { ...byId, s0: features([0.8, 0, 0]) });
+    expect(withTarget.expectations.some((e) => e.slotId === 's0')).toBe(false);
+  });
+
+  it('меньше 6 плиток в ленте — анализа сетки нет, даже если с закреплёнными их 6', () => {
+    const { project, byId } = grid('LDL/DLD');
+    expect(analyzeGrid(project, byId).metrics).not.toBeNull();
+    const analysis = analyzeGrid({ ...project, grid: { ...project.grid, pinned: 2 } }, byId);
+    expect(analysis.metrics).toBeNull();
+    expect(analysis.photos).toBe(4);
+    expect(analysis.cells.filter((cell) => cell.pinned).map((cell) => cell.L)).toEqual([0.8, 0.35]);
+  });
+});

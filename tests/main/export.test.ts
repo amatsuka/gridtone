@@ -190,7 +190,7 @@ describe('калибровочная карта (ADR 0016)', () => {
     const port = new FakePort();
     const progress: ExportProgress[] = [];
     const service = new ExportService(port, (p) => progress.push(p));
-    expect(await service.plan(project(), { dir: '/p', card: true })).toEqual({ cardFile: 'Калибровка.png', luts: [], posts: [], grid: null });
+    expect(await service.plan(project(), { dir: '/p', card: true })).toEqual({ notes: [], cardFile: 'Калибровка.png', luts: [], posts: [], grid: null });
     await expect(service.plan(project(), { dir: '/p', card: false })).rejects.toThrow(/Нечего/);
 
     const started = await service.start(root, project(), { dir: '/p', card: true });
@@ -271,13 +271,18 @@ describe('посты и сетка (ADR 0017)', () => {
     expect(() => parseExportRequest({ dir: '/p', postLuts: null })).toThrow(/LUT постов/);
   });
 
-  test('посты — в порядке публикации снизу вверх, опубликованные и пустые пропущены; параметры — плитки', async () => {
+  test('посты — в порядке публикации снизу вверх, номер — из плана: опубликованные пропущены, у пустой номер без файла; параметры — плитки', async () => {
     const p = grid();
     const service = new ExportService(new FakePort(), () => {}, { luts });
     const plan = await service.plan(p, { dir: '/проект', posts: true, postLuts: true });
+    // Пустая позиция s4 внизу сетки — пост 1 плана: файла нет, номер пропущен (ADR 0022).
     expect(plan.posts.map((item) => [item.fileBase, item.source.path, item.jpeg, item.cube])).toEqual([
-      ['1 — рампа', 'C:\\фото\\рампа.tif', true, true],
-      ['2 — однотонное', '/фото/однотонное.jpg', true, true],
+      ['2 — рампа', 'C:\\фото\\рампа.tif', true, true],
+      ['3 — однотонное', '/фото/однотонное.jpg', true, true],
+    ]);
+    expect(plan.notes).toEqual([
+      'Пост 1 — пустая позиция: номер пропущен, файла нет.',
+      'Посты 1–3 ниже опубликованного: на этих местах их не опубликовать.',
     ]);
     expect(plan.posts[0]?.source.hash).toBe('3333333333333333'.padEnd(64, 'f'));
     expect(plan.posts[0]?.params).toEqual({ photo: createAdjust() });
@@ -309,7 +314,7 @@ describe('посты и сетка (ADR 0017)', () => {
   test('имена в подпапке не сталкиваются: карта, сетка, LUT образов и посты', async () => {
     const p = grid();
     p.looks[1]!.name = 'сетка';
-    p.looks[2]!.name = '1 — рампа';
+    p.looks[2]!.name = '2 — рампа';
     const plan = await new ExportService(new FakePort(), () => {}, { luts }).plan(p, {
       dir: '/p',
       card: true,
@@ -319,8 +324,19 @@ describe('посты и сетка (ADR 0017)', () => {
     });
     expect(plan.cardFile).toBe('Калибровка.png');
     expect(plan.grid?.file).toBe('Сетка.png');
-    expect(plan.luts.map((i) => i.fileBase)).toEqual(['сетка 2', '1 — рампа']);
-    expect(plan.posts.map((i) => i.fileBase)).toEqual(['1 — рампа 2', '2 — однотонное']);
+    expect(plan.luts.map((i) => i.fileBase)).toEqual(['сетка 2', '2 — рампа']);
+    expect(plan.posts.map((i) => i.fileBase)).toEqual(['2 — рампа 2', '3 — однотонное']);
+  });
+
+  test('закреплённые — последними, с «(закрепить)»; пустая позиция без оговорки, если её нет', async () => {
+    const p = grid();
+    p.slots = [p.slots[2]!, p.slots[1]!];
+    p.grid.pinned = 1;
+    const plan = await new ExportService(new FakePort(), () => {}, { luts }).plan(p, { dir: '/p', posts: true });
+    expect(plan.posts.map((i) => i.fileBase)).toEqual(['1 — однотонное', '2 — рампа (закрепить)']);
+    expect(plan.notes).toEqual([]);
+    // Без постов в разделе оговорок плана нет.
+    expect((await new ExportService(new FakePort(), () => {}, { luts }).plan(grid(), { dir: '/p', grid: true })).notes).toEqual([]);
   });
 
   test('публиковать нечего, сетка пуста, копия LUT плитки пропала — ошибка до диалога', async () => {
@@ -355,7 +371,12 @@ describe('посты и сетка (ADR 0017)', () => {
       done: 2,
       files: ['Сетка.png'],
       errors: [{ file: '1 — рампа.jpg', message: 'оригинал не найден: C:\\фото\\рампа.tif' }],
-      warnings: [{ file: 'Сетка.png', message: 'плитка 3 (рампа): из превью' }],
+      // Оговорки плана — без файла, первыми.
+      warnings: [
+        { file: '', message: 'Пост 1 — пустая позиция: номер пропущен, файла нет.' },
+        { file: '', message: 'Посты 1–3 ниже опубликованного: на этих местах их не опубликовать.' },
+        { file: 'Сетка.png', message: 'плитка 3 (рампа): из превью' },
+      ],
     });
   });
 });

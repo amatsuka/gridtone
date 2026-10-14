@@ -40,12 +40,15 @@ export function removeLook(project: Project, lookId: string): void {
   }
 }
 
-/** Назначает образ слотам; null снимает. Опубликованные посты не перекрашиваются. */
+/**
+ * Назначает образ слотам; null снимает. Опубликованные посты не перекрашиваются, у пустых позиций образа нет
+ * (docs/decisions/0022-statuses-empty-pinned.md).
+ */
 export function assignLook(project: Project, slotIds: Iterable<string>, lookId: string | null): void {
   if (lookId !== null && !project.looks.some((look) => look.id === lookId)) return;
   const ids = new Set(slotIds);
   for (const slot of project.slots) {
-    if (!ids.has(slot.id) || slot.state === 'published') continue;
+    if (!ids.has(slot.id) || slot.state === 'published' || slot.assetId === undefined) continue;
     if (lookId === null) {
       if ('lookId' in slot) delete slot.lookId;
     } else if (slot.lookId !== lookId) {

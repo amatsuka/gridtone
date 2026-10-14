@@ -45,8 +45,8 @@ export interface ProjectStatus {
 }
 
 /**
- * Правка проекта из renderer (docs/decisions/0008-edit-flow.md): патчи Immer к слотам и образам,
- * которые main проверяет по инвариантам (docs/decisions/0010-patch-invariants.md).
+ * Правка проекта из renderer (docs/decisions/0008-edit-flow.md): патчи Immer к слотам, образам и числу
+ * закреплённых, которые main проверяет по инвариантам (docs/decisions/0010-patch-invariants.md, 0022).
  * seq растёт с каждым пакетом; dir не даёт применить пакет к проекту, открытому после отправки.
  */
 export interface PatchBatch {
@@ -102,7 +102,7 @@ export interface ExportRequest {
   lut?: LutExportRequest;
   /** Калибровочная карта `Калибровка.png` рядом с LUT (docs/decisions/0016-calibration-card.md). */
   card?: boolean;
-  /** JPEG постов из оригиналов по кадру ленты, с номерами в порядке публикации (docs/decisions/0017-post-export.md). */
+  /** JPEG постов из оригиналов по кадру ленты, с номерами плана публикации (docs/decisions/0017-post-export.md, 0022). */
   posts?: boolean;
   /** `Сетка.png` из окон сетки. */
   grid?: boolean;
@@ -135,7 +135,10 @@ export interface ExportProgress {
   files: string[];
   /** Незаписанные файлы: пост без оригинала, ошибка диска. */
   errors: { file: string; message: string }[];
-  /** Записанные с оговоркой: оригинал увеличен, плитка сетки из превью. */
+  /**
+   * Записанные с оговоркой: оригинал увеличен, плитка сетки из превью. file '' — оговорка плана публикации без
+   * файла: пустая позиция, пост ниже опубликованного (docs/decisions/0022-statuses-empty-pinned.md).
+   */
   warnings: { file: string; message: string }[];
   finished: boolean;
 }
@@ -243,7 +246,7 @@ export interface ExportSource {
 
 /** Пост: JPEG из оригинала по кадру ленты и/или `.cube` его связки «поправка фото + образ». */
 export interface PostExportItem {
-  /** «1 — рампа»: файлы <fileBase>.jpg и <fileBase>.cube. */
+  /** «1 — рампа», «9 — рампа (закрепить)»: файлы <fileBase>.jpg и <fileBase>.cube. */
   fileBase: string;
   source: ExportSource;
   crop: Crop;

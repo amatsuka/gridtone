@@ -1,7 +1,11 @@
 import type { ProjectSnapshot, SaveState } from '@shared/ipc';
+import { PINNED_MAX } from '@core/project/validate';
 import { VIEW_MODE_LABELS, VIEW_MODES } from '@shared/view';
-import { openExportDialog, setViewMode } from '../commands';
+import { insertEmptyPositions, openExportDialog, setPinned, setViewMode } from '../commands';
 import { api, useAppStore } from '../store';
+
+const COLUMNS = 3;
+const PINNED_OPTIONS = Array.from({ length: PINNED_MAX + 1 }, (_, n) => n);
 
 const SAVE_LABEL: Record<SaveState, string> = {
   saved: 'Сохранено',
@@ -50,6 +54,29 @@ export function Toolbar({ snapshot }: { snapshot: ProjectSnapshot | null }) {
             <span className="view-name">{VIEW_MODE_LABELS[viewMode]}</span>
           </div>
           <div className="spacer" />
+          {/* Пустые позиции — в начало ленты, после закреплённых (ADR 0022). Delete удаляет выделенные пустые. */}
+          <div className="grid-tools" role="group" aria-label="Позиции сетки">
+            <button onClick={() => insertEmptyPositions(1)} title="Пустая позиция в начало ленты — место под будущий пост">
+              + Позиция
+            </button>
+            <button onClick={() => insertEmptyPositions(COLUMNS)} title="Ряд из трёх пустых позиций в начало ленты">
+              + Ряд пустых
+            </button>
+            <label className="pinned-select" title="Закреплённые посты сверху: не двигаются, вне анализа, публикуются последними">
+              <select
+                aria-label="Закреплено"
+                data-testid="pinned-select"
+                value={snapshot.project.grid.pinned}
+                onChange={(e) => setPinned(Number(e.currentTarget.value))}
+              >
+                {PINNED_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    Закреплено: {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <button onClick={() => void api.invoke('project:create')}>Новый проект</button>
           <button onClick={() => void api.invoke('project:open')}>Открыть проект</button>
           <button onClick={() => void api.invoke('project:close')}>Закрыть</button>

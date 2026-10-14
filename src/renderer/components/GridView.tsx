@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Re
 import { formatPart } from '@core/harmony/outliers';
 import { deviationColor } from '@core/metrics/deviation';
 import { labToSrgb8, type TileMetrics } from '@core/metrics/tile';
+import { planOrder } from '@core/project/publish';
 import type { Project, Slot } from '@core/project/types';
 import type { ProjectSnapshot } from '@shared/ipc';
 import type { ViewMode } from '@shared/view';
@@ -11,7 +12,7 @@ import { useMetricsStore } from '../metrics';
 import { useAppStore } from '../store';
 import { GridCanvas } from './GridCanvas';
 import { ProfileHeader } from './ProfileHeader';
-import { Tile, type TileOverlay } from './Tile';
+import { Tile, type TileOverlay, type TilePlan } from './Tile';
 import { useTileDrag } from './useTileDrag';
 
 /** Радиус размытия в режиме «Прищур» — доля ширины плитки. */
@@ -32,6 +33,9 @@ export function GridView({ snapshot }: { snapshot: ProjectSnapshot }) {
   const slots = useMemo(() => previewOrder(project.slots, dragOrder), [project.slots, dragOrder]);
   const selected = useMemo(() => new Set(selection.ids), [selection.ids]);
   const overlays = useMemo(() => tileOverlays(project, metrics, viewMode), [project, metrics, viewMode]);
+  const pinned = project.grid.pinned;
+  // Номера публикации — по порядку на экране: при перетаскивании они следуют превью.
+  const plan = useMemo(() => tilePlans(slots, pinned), [slots, pinned]);
 
   const style = {
     '--tile-aspect': project.grid.ratio === '1:1' ? '1 / 1' : '3 / 4',
@@ -42,7 +46,7 @@ export function GridView({ snapshot }: { snapshot: ProjectSnapshot }) {
       <GridCanvas scrollerRef={scrollerRef} gridRef={gridRef} />
       <div className="workspace" ref={scrollerRef}>
         {project.slots.length === 0 ? (
-          <div className="empty">
+          <div className="workspace-empty">
             <p>В проекте пока нет фото.</p>
             <p>Нажмите «Импорт фото» или ⌘I.</p>
           </div>
@@ -60,18 +64,25 @@ export function GridView({ snapshot }: { snapshot: ProjectSnapshot }) {
                 if (slotId) openEditor(slotId);
               }}
             >
-              {slots.map((slot, index) => (
-                <Tile
-                  key={slot.id}
-                  slot={slot}
-                  index={index}
-                  status={slot.assetId ? assets[slot.assetId] : undefined}
-                  selected={selected.has(slot.id)}
-                  primary={slot.id === selection.primary}
-                  renderMode={renderMode}
-                  overlay={overlays.get(slot.id)}
-                />
-              ))}
+              {slots.map((slot, index) => {
+                const entry = plan.get(slot.id);
+                return (
+                  <Tile
+                    key={slot.id}
+                    slot={slot}
+                    index={index}
+                    status={slot.assetId ? assets[slot.assetId] : undefined}
+                    selected={selected.has(slot.id)}
+                    primary={slot.id === selection.primary}
+                    renderMode={renderMode}
+                    overlay={overlays.get(slot.id)}
+                    pinned={index < pinned}
+                    order={entry?.order}
+                    pin={entry?.pin ?? false}
+                    belowPublished={entry?.belowPublished ?? false}
+                  />
+                );
+              })}
             </div>
           </div>
         )}
@@ -107,15 +118,15 @@ function formatDeviation(d: number): string {
 
 /**
  * Заливки DOM-слоя: в режиме 5 — доминанта, в режиме 7 — отклонение от ожидания (ADR 0012, 0020): от цели
- * позиции, а без цели — от ожидания сетки (analyzeGrid, от 6 плиток). Ожидания нет — «нет цели».
- * Пока метрики плитки не готовы, она показывает фото.
+ * позиции, а без цели — от ожидания сетки (analyzeGrid, от 6 плиток). Ожидания нет — «нет цели», у закреплённой
+ * позиции — «закреплён». Пока метрики плитки не готовы, она показывает фото.
  */
 function tileOverlays(project: Project, metrics: Readonly<Record<string, TileMetrics>>, mode: ViewMode): Map<string, TileOverlay> {
   const overlays = new Map<string, TileOverlay>();
   if (mode !== 'dominant' && mode !== 'deviation') return overlays;
   const expectations =
     mode === 'deviation' ? new Map(gridAnalysis(project, metrics).expectations.map((e) => [e.slotId, e])) : undefined;
-  for (const slot of project.slots) {
+  for (const [index, slot] of project.slots.entries()) {
     if (!slot.assetId) continue;
     const m = metrics[slot.id];
     if (!m) continue;
@@ -125,7 +136,14 @@ function tileOverlays(project: Project, metrics: Readonly<Record<string, TileMet
     }
     const expectation = expectations?.get(slot.id);
     if (!expectation) {
-      overlays.set(slot.id, { kind: 'no-target', color: NO_TARGET_COLOR, text: 'нет цели' });
+      // Закреплённые — вне анализа (ADR 0022): ожидания у них нет.
+      const pinned = index < project.grid.pinned;
+      overlays.set(slot.id, {
+        kind: 'no-target',
+        color: NO_TARGET_COLOR,
+        text: pinned ? 'закреплён' : 'нет цели',
+        ...(pinned ? { title: 'Закреплённый пост — вне анализа' } : {}),
+      });
       continue;
     }
     const d = expectation.deviation;
@@ -143,6 +161,11 @@ function tileOverlays(project: Project, metrics: Readonly<Record<string, TileMet
     });
   }
   return overlays;
+}
+
+/** Место каждой позиции в плане публикации (planOrder, ADR 0022), по id слота. */
+function tilePlans(slots: readonly Slot[], pinned: number): Map<string, TilePlan> {
+  return new Map(planOrder(slots, pinned).map((e) => [e.slotId, { order: e.number, pin: e.pin, belowPublished: e.belowPublished }]));
 }
 
 /** Слоты в порядке превью перетаскивания; если превью устарело, — в порядке проекта. */

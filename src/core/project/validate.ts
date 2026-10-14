@@ -1,7 +1,8 @@
-// Проверка коррекции, кадра и образов: они приходят из renderer патчами и должны оставаться в своих пределах.
+// Проверка коррекции, кадра, образов, сетки и id новых слотов: они приходят из renderer патчами и должны
+// оставаться в своих пределах.
 import { HUE_BANDS } from './defaults';
 import { isRecord } from './json';
-import type { Adjust, Crop, Look, Pt } from './types';
+import type { Adjust, Crop, Look, Project, Pt } from './types';
 
 const SLIDERS_100 = ['temp', 'tint', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const;
 const FEED_ASPECTS: readonly unknown[] = ['4:5', '3:4', '1:1'];
@@ -15,8 +16,13 @@ const CURVES_KEYS = ['master', 'r', 'g', 'b'];
 const FEED_KEYS = ['aspect', 'cx', 'cy', 'zoom', 'angle'];
 const GRID_KEYS = ['cx', 'cy'];
 const LOOK_KEYS = ['id', 'name', 'adjust'];
+const GRID_SETTINGS_KEYS = ['ratio', 'columns', 'pinned'];
 
 export const LOOK_NAME_MAX = 100;
+/** id нового слота из renderer — непустая строка не длиннее (renderer даёт UUID). */
+export const SLOT_ID_MAX = 100;
+/** Закреплённых постов — не больше (spec, «Модель данных»: pinned 0–3). */
+export const PINNED_MAX = 3;
 /** Пределы ползунков: экспозиция −EXPOSURE_MAX…EXPOSURE_MAX EV, остальные и тон HSL — −SLIDER_MAX…SLIDER_MAX. */
 export const EXPOSURE_MAX = 3;
 export const SLIDER_MAX = 100;
@@ -78,6 +84,24 @@ export function isValidLook(value: unknown): value is Look {
     isValidAdjust(value['adjust']) &&
     (!withLut || typeof value['importedLut'] === 'string')
   );
+}
+
+/**
+ * Настройки сетки после правки renderer (docs/decisions/0022-statuses-empty-pinned.md): renderer меняет только
+ * число закреплённых — целое 0…PINNED_MAX; пропорции и число колонок прежние, лишних полей нет.
+ */
+export function isValidGridChange(before: Project['grid'], after: unknown): after is Project['grid'] {
+  return (
+    hasKeys(after, GRID_SETTINGS_KEYS) &&
+    after['ratio'] === before.ratio &&
+    after['columns'] === before.columns &&
+    Number.isInteger(after['pinned']) &&
+    inRange(after['pinned'], 0, PINNED_MAX)
+  );
+}
+
+export function isValidSlotId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= SLOT_ID_MAX;
 }
 
 /** Имя образа: не пустое и не из одних пробелов, не длиннее LOOK_NAME_MAX. */

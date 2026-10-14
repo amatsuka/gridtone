@@ -103,6 +103,28 @@ button.link {
   flex: 1;
 }
 
+.grid-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pinned-select select {
+  font: inherit;
+  color: var(--text);
+  background: var(--control);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.published-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
 .import-status {
   display: flex;
   flex-wrap: wrap;
@@ -308,8 +330,9 @@ button:disabled {
   flex: 1;
 }
 
+/* Сетка без фото — не `.empty`: так называются пустые позиции в сетке и на карте яркости. */
 .welcome,
-.empty {
+.workspace-empty {
   margin-top: 18vh;
   text-align: center;
   color: var(--muted);
@@ -407,10 +430,59 @@ button:disabled {
   font-size: 11px;
 }
 
-.tile-badge {
+/* Пустая позиция — место под будущий пост: пунктир, без фото (ADR 0022). */
+.tile.empty {
+  background: transparent;
+  outline: 1px dashed rgb(255 255 255 / 28%);
+  outline-offset: -1px;
+}
+
+.tile-empty-label {
+  font-size: 13px;
+}
+
+/* Номер публикации и значок оригинала — в правом верхнем углу, пометки статуса — внизу слева. */
+.tile-corner {
   position: absolute;
   top: 4px;
   right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.tile-marks {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  right: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.tile-mark,
+.tile-order {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tile-order {
+  background: rgb(255 255 255 / 82%);
+  color: #111;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-order.warn {
+  background: var(--danger);
+  color: #fff;
+}
+
+.tile-badge {
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -515,9 +587,16 @@ button:disabled {
 }
 
 .view-profile .tile-number,
-.view-profile .tile-badge,
+.view-profile .tile-corner,
+.view-profile .tile-marks,
+.view-profile .tile-empty-label,
 .view-profile .tile.selected::after {
   display: none;
+}
+
+.view-profile .tile.empty {
+  outline: none;
+  background: #2b2b2b;
 }
 
 .profile-header {
@@ -1184,6 +1263,13 @@ button:disabled {
 
 .luma-cell.published {
   opacity: 0.75;
+}
+
+/* Закреплённая — видна, но вне анализа. */
+.luma-cell.pinned {
+  outline: 1px dashed var(--muted);
+  outline-offset: -3px;
+  opacity: 0.6;
 }
 
 .luma-cell.selected {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Rgb } from '@core/color/srgb';
 import { CARD_HEIGHT, CARD_LIMITS, CARD_WIDTH, type CardReport } from '@core/lut/calibration';
 import { LUT_CHECK_LIMITS, type LutCheck, type LutExportSize } from '@core/lut/verify';
-import { GRID_TILE_WIDTH, postSize, publishOrder } from '@core/project/publish';
+import { GRID_TILE_WIDTH, planNotes, planOrder, postSize, publishOrder } from '@core/project/publish';
 import type { Look } from '@core/project/types';
 import type { CalibrationCheckResult, ExportProgress, ExportStarted, ProjectSnapshot } from '@shared/ipc';
 import { closeExportDialog } from '../commands';
@@ -65,7 +65,7 @@ function ExportForm() {
   const running = run.state === 'starting' || (job !== null && !current?.finished);
   // Раздел LUT входит в экспорт, если отмечены образ и формат; карта, посты и сетка — сами по себе.
   const lutSection = chosen.length > 0 && (cube || hald);
-  const postCount = publishOrder(snapshot.project.slots).length;
+  const postCount = publishOrder(snapshot.project.slots, snapshot.project.grid.pinned).length;
   const postSection = postCount > 0 && (posts.posts || posts.postLuts);
   const gridSection = snapshot.project.slots.length > 0 && posts.grid;
   const ready =
@@ -301,8 +301,9 @@ function postsWord(n: number): string {
 }
 
 /**
- * Посты и сетка (docs/decisions/0017-post-export.md): JPEG постов из оригиналов по кадру ленты с номерами
- * в порядке публикации, `Сетка.png` из окон сетки и `.cube` связки «поправка фото + образ» на каждый пост.
+ * Посты и сетка (docs/decisions/0017-post-export.md, 0022-statuses-empty-pinned.md): JPEG постов из оригиналов
+ * по кадру ленты с номерами плана публикации, `Сетка.png` из окон сетки и `.cube` связки «поправка фото + образ»
+ * на каждый пост. Оговорки плана — пустые позиции и посты ниже опубликованного — до экспорта и в итоге.
  */
 function PostsSection({
   snapshot,
@@ -314,7 +315,9 @@ function PostsSection({
   onChange: (choice: PostsChoice) => void;
 }) {
   const { project, assets } = snapshot;
-  const order = publishOrder(project.slots);
+  const plan = planOrder(project.slots, project.grid.pinned);
+  const order = plan.filter((entry) => entry.photo).map((entry) => entry.index);
+  const notes = planNotes(plan);
   const missing = order.filter((i) => {
     const assetId = project.slots[i]?.assetId;
     return assetId !== undefined && assets[assetId]?.original !== 'ok';
@@ -347,8 +350,13 @@ function PostsSection({
       <p className="muted export-note" data-testid="posts-count">
         {order.length === 0
           ? 'В сетке нет постов к публикации.'
-          : `${order.length} ${postsWord(order.length)} к публикации. Номер в имени файла — порядок публикации: «1 — …» — последняя плитка сетки, её публикуют первой.`}
+          : `${order.length} ${postsWord(order.length)} к публикации. Номер в имени файла — номер в плане публикации: «1 — …» — последняя плитка сетки, её публикуют первой; закреплённые — последними, с «(закрепить)».`}
       </p>
+      {notes.map((note) => (
+        <p key={note} className="export-warning" data-testid="posts-note">
+          {note}
+        </p>
+      ))}
       {missing > 0 && (
         <p className="export-error" data-testid="posts-missing">
           Постов без оригинала или с изменившимся оригиналом: {missing}. Они будут пропущены, в сетку попадёт превью.
@@ -387,7 +395,8 @@ function Result({ dir, progress }: { dir: string; progress: ExportProgress | nul
       ))}
       {progress?.warnings.map(({ file, message }, i) => (
         <p key={`${file}-${i}`} className="export-warning" data-testid="export-warning">
-          {file}: {message}
+          {file ? `${file}: ` : ''}
+          {message}
         </p>
       ))}
     </div>

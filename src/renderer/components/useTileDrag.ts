@@ -58,10 +58,10 @@ export function useTileDrag(gridRef: RefObject<HTMLElement | null>, scrollerRef:
     /** Превью считается от текущих слотов: импорт мог добавить новые посреди перетаскивания. */
     const updatePreview = (p: Press) => {
       const to = positionAt(p.x, p.y);
-      const slots = useAppStore.getState().snapshot?.project.slots;
-      if (to === null || !p.ids || !slots) return;
+      const project = useAppStore.getState().snapshot?.project;
+      if (to === null || !p.ids || !project) return;
       p.to = to;
-      const next = moveSlots(slots, p.ids, to).map((slot) => slot.id);
+      const next = moveSlots(project.slots, p.ids, to, project.grid.pinned).map((slot) => slot.id);
       const current = useAppStore.getState().dragOrder;
       if (!current || current.length !== next.length || current.some((id, i) => id !== next[i])) {
         useAppStore.setState({ dragOrder: next });
@@ -100,11 +100,12 @@ export function useTileDrag(gridRef: RefObject<HTMLElement | null>, scrollerRef:
       if (commit) moveTiles(p.ids, p.to);
     };
 
-    /** Тянем выделение, если плитка в нём; иначе только её. Опубликованные посты не двигаются. */
+    /** Тянем выделение, если плитка в нём; иначе только её. Опубликованные посты и закреплённые не двигаются. */
     const start = (p: Press, element: HTMLElement): boolean => {
       const { snapshot, selection } = useAppStore.getState();
-      const slot = snapshot?.project.slots.find((s) => s.id === p.slotId);
-      if (!slot || slot.state === 'published') return false;
+      const index = snapshot?.project.slots.findIndex((s) => s.id === p.slotId) ?? -1;
+      const slot = snapshot?.project.slots[index];
+      if (!snapshot || !slot || slot.state === 'published' || index < snapshot.project.grid.pinned) return false;
       if (!selection.ids.includes(p.slotId)) clickTile(p.slotId, 'replace');
       p.ids = [...useAppStore.getState().selection.ids];
       element.setPointerCapture(p.pointerId);

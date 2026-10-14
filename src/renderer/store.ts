@@ -110,11 +110,18 @@ export function redo(): void {
   if (snapshot && entry) commit(snapshot, applyPatches(snapshot.project, entry.patches), entry.patches);
 }
 
-/** Показывает новую версию проекта и отправляет патчи в main обычным пакетом. */
+/**
+ * Показывает новую версию проекта и отправляет патчи в main обычным пакетом. Удалённые пустые позиции
+ * (и вставленные, если их убрала отмена) уходят из выделения.
+ */
 function commit(snapshot: ProjectSnapshot, project: Project, patches: Patch[]): void {
   const seq = ++lastSeq;
   pending.push({ seq, patches });
-  useAppStore.setState({ snapshot: { ...snapshot, project } });
+  const { selection } = useAppStore.getState();
+  useAppStore.setState({
+    snapshot: { ...snapshot, project },
+    selection: project.slots === snapshot.project.slots ? selection : pruneSelection(selection, project.slots.map((slot) => slot.id)),
+  });
   api.invoke('project:patch', { dir: snapshot.dir, seq, patches: patches as ProjectPatch[] }).catch((err: unknown) => {
     console.error('main отверг правку', err);
     // Своя копия разошлась с main: берём его проект целиком.

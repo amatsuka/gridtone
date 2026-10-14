@@ -12,7 +12,7 @@ import type { Lut3D } from '@core/lut/lut3d';
 import { LUT_EXPORT_SIZES, type LutExportSize } from '@core/lut/verify';
 import { CARD_FILE_BASE, GRID_FILE_BASE, exportFolderName, fileStem, safeFileName, uniqueNames } from '@core/project/fileNames';
 import { isRecord } from '@core/project/json';
-import { postFileBases, publishOrder } from '@core/project/publish';
+import { planNotes, planOrder, postFileBases } from '@core/project/publish';
 import type { AssetRef, Look, Project, Slot } from '@core/project/types';
 import type {
   CalibrationCheckRequest,
@@ -132,9 +132,10 @@ function assetOf(project: Project, slot: Slot): AssetRef | undefined {
 }
 
 /**
- * Посты в порядке публикации (docs/decisions/0017-post-export.md): последняя плитка — «1 — …».
- * jpeg — JPEG из оригинала, cube — LUT связки «поправка фото + образ». reserved — имена файлов без
- * расширения, уже занятые в подпапке. Бросает, если публиковать нечего.
+ * Посты в порядке публикации (docs/decisions/0017-post-export.md, 0022-statuses-empty-pinned.md): номер файла —
+ * номер в плане (planOrder), последняя плитка сетки — «1 — …»; у пустых позиций номера пропущены, закреплённые —
+ * последними, с «(закрепить)». jpeg — JPEG из оригинала, cube — LUT связки «поправка фото + образ». reserved —
+ * имена файлов без расширения, уже занятые в подпапке. Бросает, если публиковать нечего.
  */
 export function postExportItems(
   project: Project,
@@ -142,16 +143,19 @@ export function postExportItems(
   luts: ReadonlyMap<string, Lut3D> = new Map(),
   reserved: readonly string[] = [],
 ): PostExportItem[] {
-  const slots = publishOrder(project.slots).map((i) => project.slots[i] as Slot);
-  if (slots.length === 0) throw new Error('В сетке нет постов к публикации');
+  const plan = planOrder(project.slots, project.grid.pinned);
+  const entries = plan.filter((entry) => entry.photo);
+  if (entries.length === 0) throw new Error('В сетке нет постов к публикации');
   const looks = new Map(project.looks.map((look) => [look.id, look]));
+  const slots = entries.map((entry) => project.slots[entry.index] as Slot);
   const assets = slots.map((slot) => {
     const asset = assetOf(project, slot);
     if (!asset) throw new Error('У поста нет фото в проекте');
     return asset;
   });
   const bases = postFileBases(
-    assets.map((asset) => fileStem(asset.path)),
+    entries.map((entry, k) => ({ number: entry.number, stem: fileStem((assets[k] as AssetRef).path), pin: entry.pin })),
+    plan.length,
     reserved,
   );
   return slots.map((slot, k) => {
@@ -209,8 +213,11 @@ export async function createExportFolder(root: string, name: string): Promise<st
   }
 }
 
-/** Что пишет задача экспорта: карта (имя файла или null), LUT образов, посты и сетка. */
-export type ExportPlan = Pick<ExportJob, 'cardFile' | 'luts' | 'posts' | 'grid'>;
+/**
+ * Что пишет задача экспорта: карта (имя файла или null), LUT образов, посты и сетка. notes — оговорки плана
+ * публикации (пустые позиции, пост ниже опубликованного): они идут в отчёт сразу, без файла.
+ */
+export type ExportPlan = Pick<ExportJob, 'cardFile' | 'luts' | 'posts' | 'grid'> & { notes: string[] };
 
 export interface ExportServiceOptions {
   luts?: LutSource;
@@ -218,7 +225,7 @@ export interface ExportServiceOptions {
 }
 
 /** Файлов в задаче: столько сообщений 'file' придёт из utility process. */
-export function exportFileCount({ cardFile, luts, posts, grid }: ExportPlan): number {
+export function exportFileCount({ cardFile, luts, posts, grid }: Omit<ExportPlan, 'notes'>): number {
   const lutFiles = luts.reduce((n, item) => n + Number(item.cube) + Number(item.hald), 0);
   const postFiles = posts.reduce((n, item) => n + Number(item.jpeg) + Number(item.cube), 0);
   return Number(cardFile !== null) + lutFiles + postFiles + Number(grid !== null);
@@ -258,6 +265,7 @@ export class ExportService {
     }
     const lutItems = request.lut ? lutExportItems(project, request.lut, luts, reserved) : [];
     return {
+      notes: posts ? planNotes(planOrder(project.slots, project.grid.pinned)) : [],
       cardFile,
       luts: lutItems,
       posts: posts
@@ -272,7 +280,7 @@ export class ExportService {
 
   /** Создаёт подпапку в root и запускает экспорт. Ход и итог — в onProgress. */
   async start(root: string, project: Project, request: ExportRequest): Promise<ExportStarted> {
-    const plan = await this.plan(project, request);
+    const { notes, ...plan } = await this.plan(project, request);
     const dir = await createExportFolder(root, exportFolderName(project.name, this.now()));
     const jobId = randomUUID();
     const progress: ExportProgress = {
@@ -282,7 +290,8 @@ export class ExportService {
       done: 0,
       files: [],
       errors: [],
-      warnings: [],
+      // Оговорки плана — без файла, первыми в отчёте.
+      warnings: notes.map((message) => ({ file: '', message })),
       finished: false,
     };
     const report = () =>

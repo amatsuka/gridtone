@@ -5,8 +5,9 @@ import { applyFix, type TileFix } from '@core/harmony/fixes';
 import { copyAdjustGroups, type AdjustGroup } from '@core/project/adjustGroups';
 import { assignLook, createLook, duplicateLook, nextLookName, removeLook } from '@core/project/looks';
 import { moveSlots, shiftSlots } from '@core/project/order';
+import { assignSlots, insertEmptySlots, isEmptySlot, removeEmptySlots, setPublished } from '@core/project/slots';
 import type { Adjust, Crop, Project, Slot } from '@core/project/types';
-import { isValidLookName } from '@core/project/validate';
+import { isValidLookName, PINNED_MAX } from '@core/project/validate';
 import type { MenuCommand } from '@shared/ipc';
 import { isViewMode, type ViewMode } from '@shared/view';
 import { clickSelection, EMPTY_SELECTION, selectAll } from './selection';
@@ -57,30 +58,60 @@ export function setInspectorTab(tab: InspectorTab): void {
 // ─── Порядок ────────────────────────────────────────────────────────────────
 
 /**
- * Переставляет слоты. Патчи — `replace slots[i]` только для изменившихся позиций, а не весь массив:
- * иначе отмена после импорта вернула бы массив без новых слотов (ADR 0011).
+ * Переписывает порядок и состав слотов. Патчи — `replace slots[i]` только для изменившихся позиций и add или
+ * remove в хвосте, а не весь массив: иначе отмена после импорта вернула бы массив без новых слотов (ADR 0011, 0022).
  */
-function reorder(arrange: (slots: readonly Slot[]) => Slot[]): void {
+function rewriteSlots(arrange: (slots: readonly Slot[], pinned: number) => Slot[]): void {
   editProject((draft) => {
     const base = original(draft.slots) as Slot[];
-    arrange(base).forEach((slot, i) => {
-      if (slot !== base[i]) draft.slots[i] = slot;
-    });
+    assignSlots(draft.slots, base, arrange(base, draft.grid.pinned));
   });
 }
 
-/** Отпускание при перетаскивании: блок ids встаёт на позицию to. */
+/** Отпускание при перетаскивании: блок ids встаёт на позицию to; одна плитка на пустой позиции — обмен. */
 export function moveTiles(ids: readonly string[], to: number): void {
-  reorder((slots) => moveSlots(slots, ids, to));
+  rewriteSlots((slots, pinned) => moveSlots(slots, ids, to, pinned));
 }
 
-/** Shift+стрелки: выделение сдвигается на delta позиций. */
+/** Shift+стрелки: выделение сдвигается на delta позиций. Закреплённые и опубликованные стоят на месте. */
 export function shiftSelection(delta: number): void {
   const { ids, primary } = useAppStore.getState().selection;
   if (ids.length === 0) return;
-  reorder((slots) => shiftSlots(slots, ids, delta));
+  rewriteSlots((slots, pinned) => shiftSlots(slots, ids, delta, pinned));
   // Сдвинутая плитка могла уйти за край прокрутки; DOM обновится к следующему кадру.
   if (primary) scrollToTile(primary);
+}
+
+// ─── Статусы, пустые позиции и закреплённые (docs/decisions/0022-statuses-empty-pinned.md) ───
+
+/** «Опубликован» во вкладке «Фото»: статус всех выделенных позиций с фото одной записью истории. */
+export function setSelectionPublished(published: boolean): void {
+  const { ids } = useAppStore.getState().selection;
+  if (ids.length > 0) editProject((draft) => setPublished(draft, ids, published));
+}
+
+/** «+ Позиция» и «+ Ряд пустых»: пустые позиции в начало ленты, сразу после закреплённых, одной записью. */
+export function insertEmptyPositions(count: number): void {
+  if (!project()) return;
+  const ids = Array.from({ length: count }, () => crypto.randomUUID());
+  rewriteSlots((slots, pinned) => insertEmptySlots(slots, ids, pinned));
+}
+
+/** Delete и Backspace: выделенные пустые позиции удаляются одной записью; плитки с фото остаются. */
+export function removeSelectedEmpty(): void {
+  const current = project();
+  const { ids } = useAppStore.getState().selection;
+  const selected = new Set(ids);
+  if (!current?.slots.some((slot) => selected.has(slot.id) && isEmptySlot(slot))) return;
+  rewriteSlots((slots) => removeEmptySlots(slots, ids));
+}
+
+/** «Закреплено: 0–3» в тулбаре: первые n позиций — закреплённые посты, вне ленты и анализа. */
+export function setPinned(n: number): void {
+  if (!Number.isInteger(n) || n < 0 || n > PINNED_MAX) return;
+  editProject((draft) => {
+    if (draft.grid.pinned !== n) draft.grid.pinned = n as Project['grid']['pinned'];
+  });
 }
 
 function scrollToTile(slotId: string): void {
@@ -89,11 +120,14 @@ function scrollToTile(slotId: string): void {
 
 // ─── Правки ─────────────────────────────────────────────────────────────────
 
+/** Позицию правят ползунки и кадр: с фото и не опубликованная (spec, «Статусы позиций»; ADR 0022). */
+const editable = (slot: Slot) => !isEmptySlot(slot) && slot.state !== 'published';
+
 /** Правка поправки фото у слота: ищем по id, а не по индексу — порядок мог поменяться. */
 export function editSlotAdjust(slotId: string, change: (adjust: Adjust) => void, gesture?: string): void {
   editProject((draft) => {
     const slot = draft.slots.find((s) => s.id === slotId);
-    if (slot) change(slot.adjust);
+    if (slot && editable(slot)) change(slot.adjust);
   }, gesture);
 }
 
@@ -105,7 +139,7 @@ export function applyTileFix(slotId: string, fix: TileFix): void {
   if (fix.replace) return;
   editProject((draft) => {
     const slot = draft.slots.find((s) => s.id === slotId);
-    if (slot && slot.state !== 'published') applyFix(slot.adjust, fix);
+    if (slot && editable(slot)) applyFix(slot.adjust, fix);
   });
 }
 
@@ -113,7 +147,7 @@ export function applyTileFix(slotId: string, fix: TileFix): void {
 export function editSlotCrop(slotId: string, change: (crop: Crop) => void, gesture?: string): void {
   editProject((draft) => {
     const slot = draft.slots.find((s) => s.id === slotId);
-    if (slot) change(slot.crop);
+    if (slot && editable(slot)) change(slot.crop);
   }, gesture);
 }
 
@@ -152,12 +186,12 @@ export function syncAdjust(groups: readonly AdjustGroup[]): void {
   if (slot && groups.length > 0) applyToSlots(selection.ids.filter((id) => id !== slot.id), slot.adjust, groups);
 }
 
-/** Опубликованные посты не перекрашиваются (spec, «Статусы позиций»). */
+/** Опубликованные посты не перекрашиваются (spec, «Статусы позиций»), у пустых позиций коррекции нет. */
 function applyToSlots(ids: readonly string[], source: Adjust, groups: readonly AdjustGroup[]): void {
   const targets = new Set(ids);
   editProject((draft) => {
     for (const slot of draft.slots) {
-      if (targets.has(slot.id) && slot.state !== 'published') copyAdjustGroups(slot.adjust, source, groups);
+      if (targets.has(slot.id) && editable(slot)) copyAdjustGroups(slot.adjust, source, groups);
     }
   });
 }

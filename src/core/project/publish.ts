@@ -1,7 +1,10 @@
 // Экспорт постов и сетки (docs/spec.md, «Модуль 1», «Экспорт»; docs/decisions/0017-post-export.md):
 // порядок публикации, имена файлов, размеры постов, раскладка сетки и предуменьшение оригинала.
-// Пиксели считает core/image/render.ts, файлы пишет utility process.
+// Порядок публикации и номера постов — только planOrder (docs/decisions/0022-statuses-empty-pinned.md):
+// по нему нумеруют плитки, экспорт и план контента. Пиксели считает core/image/render.ts, файлы пишет
+// utility process.
 import { safeFileName, uniqueNames } from './fileNames';
+import { isEmptySlot } from './slots';
 import type { Crop, Ratio, Slot } from './types';
 
 /** Ширина поста в ленте; высота — по пропорциям кадра ленты. */
@@ -28,27 +31,94 @@ export function postSize(aspect: Crop['feed']['aspect']): [number, number] {
   return [POST_WIDTH, POST_HEIGHT[aspect]];
 }
 
-/**
- * Индексы слотов в порядке публикации. Сетка — снизу вверх: новый пост встаёт в левый верхний угол,
- * поэтому последняя плитка публикуется первой. Опубликованные и пустые позиции пропускаются.
- */
-export function publishOrder(slots: readonly Slot[]): number[] {
-  const order: number[] = [];
-  for (let i = slots.length - 1; i >= 0; i--) {
-    const slot = slots[i] as Slot;
-    if (slot.state === 'planned' && slot.assetId !== undefined) order.push(i);
-  }
-  return order;
+/** Позиция плана публикации: запланированный пост или пустая позиция. */
+export interface PlanEntry {
+  /** Номер в порядке публикации, с 1. */
+  number: number;
+  /** Позиция в сетке. */
+  index: number;
+  slotId: string;
+  /** Есть фото — пост; нет — пустая позиция: номер у неё есть, файла нет. */
+  photo: boolean;
+  /** Закреплённая позиция: пост публикуется последним и закрепляется. */
+  pin: boolean;
+  /** В ленте ниже опубликованного: на этом месте пост не опубликовать — новые встают в начало ленты. */
+  belowPublished: boolean;
 }
 
 /**
- * Имена файлов постов без расширения: «1 — рампа» — номер в порядке публикации и имя оригинала.
- * Номера одной ширины (01…12), чтобы Finder сортировал их по порядку. reserved — имена, уже занятые
- * в подпапке экспорта (карта, сетка, LUT образов): совпавшее получит номер.
+ * План публикации (ADR 0022). Сетка — снизу вверх: новый пост встаёт в начало ленты, сразу после закреплённых,
+ * поэтому последняя позиция публикуется первой. В план входят запланированные посты и пустые позиции, опубликованные
+ * пропускаются. Закреплённые (первые pinned позиций) — вне ленты: идут последними, тоже снизу вверх, с «закрепить».
  */
-export function postFileBases(stems: readonly string[], reserved: readonly string[] = []): string[] {
-  const width = String(stems.length).length;
-  const bases = stems.map((stem, i) => `${String(i + 1).padStart(width, '0')} — ${safeFileName(stem, 'фото')}`);
+export function planOrder(slots: readonly Slot[], pinned: number): PlanEntry[] {
+  const first = Math.min(Math.max(0, pinned), slots.length);
+  const entries: PlanEntry[] = [];
+  const add = (index: number, pin: boolean, belowPublished: boolean) => {
+    const slot = slots[index] as Slot;
+    if (slot.state === 'published') return;
+    entries.push({ number: entries.length + 1, index, slotId: slot.id, photo: !isEmptySlot(slot), pin, belowPublished });
+  };
+  // Опубликованный выше в ленте: позиция с меньшим индексом, не закреплённая.
+  const firstPublished = slots.findIndex((slot, i) => i >= first && slot.state === 'published');
+  for (let i = slots.length - 1; i >= first; i--) add(i, false, firstPublished >= 0 && firstPublished < i);
+  for (let i = first - 1; i >= 0; i--) add(i, true, false);
+  return entries;
+}
+
+/** Индексы постов с фото в порядке публикации — то, что экспортируется файлами. */
+export function publishOrder(slots: readonly Slot[], pinned: number): number[] {
+  return planOrder(slots, pinned)
+    .filter((entry) => entry.photo)
+    .map((entry) => entry.index);
+}
+
+/** «1», «1, 2», «1–3, 5»: подряд от трёх номеров — диапазоном. */
+export function formatNumbers(numbers: readonly number[]): string {
+  const parts: string[] = [];
+  for (let i = 0; i < numbers.length; ) {
+    let j = i;
+    while (j + 1 < numbers.length && (numbers[j + 1] as number) === (numbers[j] as number) + 1) j++;
+    if (j - i >= 2) parts.push(`${numbers[i]}–${numbers[j]}`);
+    else for (let k = i; k <= j; k++) parts.push(String(numbers[k]));
+    i = j + 1;
+  }
+  return parts.join(', ');
+}
+
+/**
+ * Оговорки плана для диалога и отчёта экспорта: пустые позиции — номер есть, файла нет; пост ниже опубликованного
+ * на своём месте не опубликовать.
+ */
+export function planNotes(entries: readonly PlanEntry[]): string[] {
+  const notes: string[] = [];
+  const empty = entries.filter((entry) => !entry.photo).map((entry) => entry.number);
+  if (empty.length === 1) notes.push(`Пост ${empty[0]} — пустая позиция: номер пропущен, файла нет.`);
+  else if (empty.length > 1) notes.push(`Посты ${formatNumbers(empty)} — пустые позиции: номера пропущены, файлов нет.`);
+  const below = entries.filter((entry) => entry.belowPublished).map((entry) => entry.number);
+  if (below.length === 1) notes.push(`Пост ${below[0]} ниже опубликованного: на этом месте его не опубликовать.`);
+  else if (below.length > 1) notes.push(`Посты ${formatNumbers(below)} ниже опубликованного: на этих местах их не опубликовать.`);
+  return notes;
+}
+
+/** Пост для имени файла: номер в плане, имя оригинала, закреплять ли. */
+export interface PostName {
+  number: number;
+  stem: string;
+  pin: boolean;
+}
+
+/**
+ * Имена файлов постов без расширения: «1 — рампа» — номер в плане публикации и имя оригинала; у закреплённого —
+ * «9 — рампа (закрепить)». Номера одной ширины по числу позиций плана total (01…12), чтобы Finder сортировал их
+ * по порядку; у пустых позиций номера пропущены. reserved — имена, уже занятые в подпапке экспорта (карта, сетка,
+ * LUT образов): совпавшее получит номер.
+ */
+export function postFileBases(posts: readonly PostName[], total: number, reserved: readonly string[] = []): string[] {
+  const width = String(total).length;
+  const bases = posts.map(
+    ({ number, stem, pin }) => `${String(number).padStart(width, '0')} — ${safeFileName(stem, 'фото')}${pin ? ' (закрепить)' : ''}`,
+  );
   return uniqueNames([...reserved, ...bases]).slice(reserved.length);
 }
 

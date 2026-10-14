@@ -9,6 +9,7 @@ import {
   closeExportDialog,
   isTextField,
   openEditor,
+  removeSelectedEmpty,
   runMenuCommand,
   setShowOriginal,
   setViewMode,
@@ -79,6 +80,9 @@ function onKeyDown(event: KeyboardEvent): void {
     shiftSelection(delta);
   } else if (!editor && plain && event.code === 'KeyE' && !text) {
     openEditor();
+  } else if (!editor && plain && (event.code === 'Delete' || event.code === 'Backspace') && !text) {
+    // Удаляются только пустые позиции; фото из сетки убирает только main (ADR 0022).
+    removeSelectedEmpty();
   } else if (plain && view !== undefined && !text && !(event.target instanceof HTMLSelectElement)) {
     setViewMode(view);
   } else if (plain && event.code === ORIGINAL_CODE && !text) {

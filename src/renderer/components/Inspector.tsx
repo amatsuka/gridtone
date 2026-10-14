@@ -18,6 +18,7 @@ import {
   renameLook,
   setActiveLook,
   setInspectorTab,
+  setSelectionPublished,
 } from '../commands';
 import { useLookLut } from '../luts';
 import { plural } from '../plural';
@@ -52,7 +53,7 @@ export function Inspector() {
       </div>
       {project &&
         (tab === 'photo' ? (
-          <PhotoTab slot={primary} selectedCount={selection.ids.length} />
+          <PhotoTab project={project} slot={primary} selectedIds={selection.ids} />
         ) : tab === 'look' ? (
           <LookTab project={project} primary={primary} selectedIds={selection.ids} />
         ) : (
@@ -62,8 +63,9 @@ export function Inspector() {
   );
 }
 
-function PhotoTab({ slot, selectedCount }: { slot: Slot | undefined; selectedCount: number }) {
+function PhotoTab({ project, slot, selectedIds }: { project: Project; slot: Slot | undefined; selectedIds: readonly string[] }) {
   if (!slot) return <p className="muted">Выберите плитку, чтобы править её цвет.</p>;
+  const selectedCount = selectedIds.length;
   // Опубликованные посты только участвуют в анализе (spec, «Статусы позиций»).
   const locked = slot.state === 'published' || !slot.assetId;
 
@@ -75,6 +77,7 @@ function PhotoTab({ slot, selectedCount }: { slot: Slot | undefined; selectedCou
           Сбросить
         </button>
       </header>
+      <PublishedToggle project={project} selectedIds={selectedIds} />
       {selectedCount > 1 && (
         <div className="inspector-note">
           <span>
@@ -83,7 +86,11 @@ function PhotoTab({ slot, selectedCount }: { slot: Slot | undefined; selectedCou
           <button onClick={() => openGroupsDialog('sync')}>Синхронизировать…</button>
         </div>
       )}
-      {locked && <p className="muted">{slot.assetId ? 'Опубликованный пост не редактируется.' : 'В позиции нет фото.'}</p>}
+      {locked && (
+        <p className="muted">
+          {slot.assetId ? 'Опубликованный пост не редактируется.' : 'Пустая позиция — место под будущий пост. Удалить — Delete.'}
+        </p>
+      )}
       <AdjustPanel
         adjust={slot.adjust}
         disabled={locked}
@@ -91,6 +98,31 @@ function PhotoTab({ slot, selectedCount }: { slot: Slot | undefined; selectedCou
         onEdit={(change, gesture) => editSlotAdjust(slot.id, change, gesture)}
       />
     </>
+  );
+}
+
+/**
+ * «Опубликован» для выделения (ADR 0022): отмечен, если опубликованы все выделенные позиции с фото; щелчок ставит
+ * или снимает статус у всех одной записью истории. Опубликованный не правится и не двигается.
+ */
+function PublishedToggle({ project, selectedIds }: { project: Project; selectedIds: readonly string[] }) {
+  const selected = new Set(selectedIds);
+  const photos = project.slots.filter((s) => selected.has(s.id) && s.assetId !== undefined);
+  const published = photos.filter((s) => s.state === 'published').length;
+  const all = photos.length > 0 && published === photos.length;
+  return (
+    <label className="check published-toggle" title="Опубликованный пост — контекст анализа: не правится и не двигается">
+      <input
+        type="checkbox"
+        checked={all}
+        disabled={photos.length === 0}
+        ref={(input) => {
+          if (input) input.indeterminate = published > 0 && !all;
+        }}
+        onChange={() => setSelectionPublished(!all)}
+      />
+      Опубликован
+    </label>
   );
 }
 

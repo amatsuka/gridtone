@@ -4,8 +4,9 @@ import { createAdjust, createProject, createSlot } from '@core/project/defaults'
 import { assignLook, createLook, removeLook } from '@core/project/looks';
 import { moveSlots } from '@core/project/order';
 import { applyProjectPatches, PatchError, type ProjectPatch } from '@core/project/patch';
+import { assignSlots, insertEmptySlots, removeEmptySlots, setPublished } from '@core/project/slots';
 import type { Project } from '@core/project/types';
-import { CURVE_MAX_POINTS } from '@core/project/validate';
+import { CURVE_MAX_POINTS, SLOT_ID_MAX } from '@core/project/validate';
 
 enablePatches();
 
@@ -78,15 +79,15 @@ describe('патчи проекта из renderer', () => {
   test('замена всей коррекции слота', () => {
     const project = sampleProject();
     const adjust = { ...createAdjust(), contrast: 40 };
-    applyProjectPatches(project, [{ op: 'replace', path: ['slots', 1, 'adjust'], value: adjust }]);
-    expect(project.slots[1]?.adjust).toEqual(adjust);
+    applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'adjust'], value: adjust }]);
+    expect(project.slots[0]?.adjust).toEqual(adjust);
   });
 
   test.each([
     [['name'], 'x'],
     [['assets', 'aaaaaaaaaaaaaaaa', 'path'], '/etc/passwd'],
     [['slots', 0, 'assetId'], 'bbbbbbbbbbbbbbbb'],
-    [['slots', 0, 'state'], 'published'],
+    [['slots', 1, 'state'], 'published'],
     [['slots', 0], {}],
     [['slots', 5, 'adjust', 'exposure'], 1],
     [['slots', '0', 'adjust', 'exposure'], 1],
@@ -185,12 +186,13 @@ describe('инварианты: перестановка', () => {
   test('перестановка по индексам проходит', () => {
     const base = projectWithLook();
     const result = roundTrip(base, (draft) => {
-      const order = moveSlots(base.slots, ['s1'], 2);
+      const order = moveSlots(base.slots, ['s1'], 2, 0);
       order.forEach((slot, i) => {
         if (slot !== base.slots[i]) draft.slots[i] = slot;
       });
     });
-    expect(ids(result)).toEqual(['s2', 's3', 's1']);
+    // s3 — пустая позиция: одна плитка на ней меняется с ней местами (ADR 0022).
+    expect(ids(result)).toEqual(['s3', 's2', 's1']);
     expect(result.slots[2]?.lookId).toBe('look-1');
   });
 
@@ -214,13 +216,13 @@ describe('инварианты: перестановка', () => {
     expectRejected(project, [{ op: 'add', path: ['slots', 1, 'target'], value: undefined }]);
   });
 
-  test('добавление, удаление и повтор слота отвергаются', () => {
+  test('добавление фото, удаление фото и повтор слота отвергаются', () => {
     const project = projectWithLook();
-    expectRejected(project, [{ op: 'add', path: ['slots', 3], value: createSlot('s4') }]);
-    expectRejected(project, [{ op: 'remove', path: ['slots', 2] }]);
-    expectRejected(project, [{ op: 'replace', path: ['slots', 'length'], value: 2 }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 3], value: createSlot('s4', 'aaaaaaaaaaaaaaaa') }]);
+    expectRejected(project, [{ op: 'remove', path: ['slots', 0] }]);
     expectRejected(project, [{ op: 'replace', path: ['slots', 2], value: clone(project.slots[0]) }]);
     expectRejected(project, [{ op: 'replace', path: ['slots'], value: [] }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots'], value: {} }]);
   });
 });
 
@@ -230,7 +232,8 @@ describe('инварианты: образы', () => {
       draft.looks.push(createLook('look-2', 'Холодный'));
       assignLook(draft, ['s1', 's2'], 'look-2');
     });
-    expect(result.slots.map((s) => s.lookId)).toEqual(['look-2', 'look-2']);
+    // s2 — пустая позиция: образа у неё нет (ADR 0022).
+    expect(result.slots.map((s) => s.lookId)).toEqual(['look-2', undefined]);
   });
 
   test('удаление образа вместе со ссылками проходит', () => {
@@ -305,5 +308,140 @@ describe('инварианты: образы', () => {
     expect(target).toEqual(project);
     expect(target.looks[0]?.importedLut).toBe(LUT_ID);
     expect(target.slots[0]?.lookId).toBe('look-1');
+  });
+});
+
+describe('инварианты: статусы, пустые позиции и закреплённые (ADR 0022)', () => {
+  const A = 'aaaaaaaaaaaaaaaa';
+  /** Три фото и пустая позиция в конце. */
+  function grid(): Project {
+    const project = sampleProject();
+    project.slots = [createSlot('p1', A), createSlot('p2', A), createSlot('p3', A), createSlot('e1')];
+    project.looks.push(createLook('look-1', 'Тёплый'), createLook('look-2', 'Холодный'));
+    return project;
+  }
+  const ids = (project: Project) => project.slots.map((s) => s.id);
+
+  test('статус «запланирован» ↔ «опубликован» — только у позиции с фото', () => {
+    const published = roundTrip(grid(), (draft) => setPublished(draft, ['p2', 'p3', 'e1'], true));
+    expect(published.slots.map((s) => s.state)).toEqual(['planned', 'published', 'published', 'empty']);
+    const back = roundTrip(published, (draft) => setPublished(draft, ['p2'], false));
+    expect(back.slots[1]?.state).toBe('planned');
+    const project = grid();
+    expectRejected(project, [{ op: 'replace', path: ['slots', 3, 'state'], value: 'published' }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 3, 'state'], value: 'planned' }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'state'], value: 'empty' }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 0, 'state'], value: 'draft' }]);
+  });
+
+  test('у опубликованного коррекция и кадр не меняются, в том числе в одном пакете со статусом', () => {
+    const project = grid();
+    project.slots[1]!.state = 'published';
+    expectRejected(project, [{ op: 'replace', path: ['slots', 1, 'adjust', 'exposure'], value: 1 }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 1, 'crop', 'grid', 'cy'], value: 0.4 }]);
+    expectRejected(project, [
+      { op: 'replace', path: ['slots', 1, 'state'], value: 'planned' },
+      { op: 'replace', path: ['slots', 1, 'adjust', 'exposure'], value: 1 },
+    ]);
+    expectRejected(project, [
+      { op: 'replace', path: ['slots', 0, 'state'], value: 'published' },
+      { op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 1 },
+    ]);
+    // Перестановка опубликованного целым слотом — не правка: кадр и коррекция те же.
+    roundTrip(project, (draft) => {
+      const [a, b] = [draft.slots[0]!, draft.slots[1]!];
+      draft.slots[0] = b;
+      draft.slots[1] = a;
+    });
+    applyProjectPatches(project, [{ op: 'replace', path: ['slots', 0, 'adjust', 'exposure'], value: 1 }]);
+    expect(project.slots[0]?.adjust.exposure).toBe(1);
+  });
+
+  test('образ опубликованного не назначается и не снимается, но уходит вместе с удалением образа и возвращается отменой', () => {
+    const project = grid();
+    project.slots[1]!.lookId = 'look-1';
+    project.slots[1]!.state = 'published';
+    expectRejected(project, [{ op: 'replace', path: ['slots', 1, 'lookId'], value: 'look-2' }]);
+    expectRejected(project, [{ op: 'remove', path: ['slots', 1, 'lookId'] }]);
+    project.slots[2]!.state = 'published';
+    expectRejected(project, [{ op: 'add', path: ['slots', 2, 'lookId'], value: 'look-2' }]);
+
+    const [removed, patches, inverse] = produceWithPatches(project, (draft) => removeLook(draft, 'look-1'));
+    const target = clone(project);
+    applyProjectPatches(target, patches as ProjectPatch[]);
+    expect(target).toEqual(removed);
+    expect('lookId' in target.slots[1]!).toBe(false);
+    applyProjectPatches(target, inverse as ProjectPatch[]);
+    expect(target).toEqual(project);
+  });
+
+  test('новый слот — только пустая позиция со значениями по умолчанию', () => {
+    const base = grid();
+    const result = roundTrip(base, (draft) => assignSlots(draft.slots, base.slots, insertEmptySlots(base.slots, ['n1', 'n2'], 1)));
+    expect(ids(result)).toEqual(['p1', 'n1', 'n2', 'p2', 'p3', 'e1']);
+    expect(result.slots[1]).toEqual(createSlot('n1'));
+
+    const at = (value: unknown): ProjectPatch[] => [{ op: 'add', path: ['slots', 4], value }];
+    const empty = createSlot('n');
+    for (const value of [
+      createSlot('n', A),
+      { ...empty, state: 'planned' },
+      { ...empty, adjust: { ...createAdjust(), exposure: 1 } },
+      { ...empty, crop: { ...empty.crop, grid: { cx: 0.4, cy: 0.5 } } },
+      { ...empty, lookId: 'look-1' },
+      { ...empty, choiceLocked: true },
+      { ...empty, postType: 'reels' },
+      { ...empty, candidates: [{ assetId: A, score: 1, parts: { L: 0, hue: 0, chroma: 0, palette: 0, penalty: 0 } }] },
+      { ...empty, extra: 1 },
+      createSlot(''),
+      createSlot('x'.repeat(SLOT_ID_MAX + 1)),
+      createSlot('p1'),
+      { ...empty, id: 7 },
+      null,
+    ]) {
+      expectRejected(grid(), at(value));
+    }
+  });
+
+  test('удалить можно только пустую позицию; фото в позицию не поставить и из неё не убрать', () => {
+    const base = grid();
+    const removed = roundTrip(base, (draft) => assignSlots(draft.slots, base.slots, removeEmptySlots(base.slots, ['e1', 'p1'])));
+    expect(ids(removed)).toEqual(['p1', 'p2', 'p3']);
+    applyProjectPatches(grid(), [{ op: 'replace', path: ['slots', 'length'], value: 3 }]);
+    expectRejected(grid(), [{ op: 'remove', path: ['slots', 0] }]);
+    expectRejected(grid(), [{ op: 'replace', path: ['slots', 'length'], value: 2 }]);
+    expectRejected(grid(), [{ op: 'add', path: ['slots', 3, 'assetId'], value: A }]);
+    expectRejected(grid(), [{ op: 'remove', path: ['slots', 0, 'assetId'] }]);
+    // Фото «переезжает» в пустую позицию только перестановкой слотов целиком.
+    const swapped = roundTrip(base, (draft) => {
+      const [photo, empty] = [draft.slots[0]!, draft.slots[3]!];
+      draft.slots[0] = empty;
+      draft.slots[3] = photo;
+    });
+    expect(ids(swapped)).toEqual(['e1', 'p2', 'p3', 'p1']);
+  });
+
+  test('у пустой позиции коррекция, кадр и образ не меняются', () => {
+    const project = grid();
+    expectRejected(project, [{ op: 'replace', path: ['slots', 3, 'adjust', 'exposure'], value: 1 }]);
+    expectRejected(project, [{ op: 'replace', path: ['slots', 3, 'crop', 'grid', 'cx'], value: 0.4 }]);
+    expectRejected(project, [{ op: 'add', path: ['slots', 3, 'lookId'], value: 'look-1' }]);
+  });
+
+  test('корень grid — только pinned 0–3', () => {
+    const pinned = roundTrip(grid(), (draft) => {
+      draft.grid.pinned = 2;
+    });
+    expect(pinned.grid).toEqual({ ratio: '3:4', columns: 3, pinned: 2 });
+    roundTrip(pinned, (draft) => {
+      draft.grid.pinned = 0;
+    });
+    for (const value of [4, -1, 1.5, '1', null]) expectRejected(grid(), [{ op: 'replace', path: ['grid', 'pinned'], value }]);
+    expectRejected(grid(), [{ op: 'replace', path: ['grid', 'ratio'], value: '1:1' }]);
+    expectRejected(grid(), [{ op: 'replace', path: ['grid', 'columns'], value: 4 }]);
+    expectRejected(grid(), [{ op: 'add', path: ['grid', 'extra'], value: 1 }]);
+    expectRejected(grid(), [{ op: 'remove', path: ['grid', 'pinned'] }]);
+    expectRejected(grid(), [{ op: 'replace', path: ['grid'], value: { ratio: '3:4', columns: 3, pinned: 1, extra: 1 } }]);
+    expectRejected(grid(), [{ op: 'replace', path: ['grid', '__proto__', 'pinned'], value: 1 }]);
   });
 });

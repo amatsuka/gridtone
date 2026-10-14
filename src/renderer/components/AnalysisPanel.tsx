@@ -68,7 +68,10 @@ export function AnalysisPanel({ project }: { project: Project }) {
   );
 }
 
-/** Мини-карта 3 × N: клетка залита серым своей L. Клик выделяет плитку, ⌘ и Shift — как в сетке. */
+/**
+ * Мини-карта 3 × N: клетка залита серым своей L. Клик выделяет плитку, ⌘ и Shift — как в сетке. Закреплённые
+ * видны с пометкой, но в анализ не входят (ADR 0022).
+ */
 function LumaMap({ analysis, ratio }: { analysis: GridAnalysis; ratio: Project['grid']['ratio'] }) {
   const selection = useAppStore((state) => state.selection);
   const selected = new Set(selection.ids);
@@ -89,7 +92,13 @@ function LumaMap({ analysis, ratio }: { analysis: GridAnalysis; ratio: Project['
         const L = cell.L;
         // Подпись тёмная на светлой клетке и светлая на тёмной.
         const style = L === null ? undefined : { backgroundColor: cssRgb(labToSrgb8([L, 0, 0])), color: L > 0.62 ? '#111' : '#eee' };
-        const classes = ['luma-cell', selected.has(cell.slotId) ? 'selected' : '', cell.published ? 'published' : ''].filter(Boolean);
+        const classes = [
+          'luma-cell',
+          selected.has(cell.slotId) ? 'selected' : '',
+          cell.published ? 'published' : '',
+          cell.pinned ? 'pinned' : '',
+        ].filter(Boolean);
+        const marks = `${cell.published ? ', опубликован' : ''}${cell.pinned ? ', закреплён — вне анализа' : ''}`;
         return (
           <button
             key={cell.slotId}
@@ -99,8 +108,9 @@ function LumaMap({ analysis, ratio }: { analysis: GridAnalysis; ratio: Project['
             data-index={cell.index}
             data-slot-id={cell.slotId}
             data-l={L ?? undefined}
+            data-pinned={cell.pinned || undefined}
             aria-pressed={selected.has(cell.slotId)}
-            title={`Пост ${cell.index + 1}${cell.published ? ', опубликован' : ''}${L === null ? '' : ` · L ${fixed(L, 3)}`}`}
+            title={`Пост ${cell.index + 1}${marks}${L === null ? '' : ` · L ${fixed(L, 3)}`}`}
             onClick={(event) => onClick(event, cell)}
           >
             {L === null ? '…' : fixed(L)}
