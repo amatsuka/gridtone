@@ -1,8 +1,9 @@
 // Точка входа utility process: принимает задачи от main — строит прокси, экспортирует LUT, калибровочную
-// карту, посты и сетку, проверяет возвращённую карту.
+// карту, посты и сетку, проверяет возвращённую карту, читает картинку-шаблон паттерна.
 import type { IndexJob, IndexerRequest, IndexerResponse } from '@shared/ipc';
 import { runCardCheck } from './calibration';
 import { runExport } from './export';
+import { runDecodeImage } from './patternImage';
 import { IndexError, errorMessage, indexFile } from './proxies';
 
 const MAX_PARALLEL = 2;
@@ -42,6 +43,11 @@ port.on('message', (event) => {
   // Проверка карты — одна картинка, доли секунды: без очереди.
   if (request.type === 'check-card') {
     void runCardCheck(request, post);
+    return;
+  }
+  // Картинка-шаблон — одна картинка, как и карта: без очереди.
+  if (request.type === 'decode-image') {
+    void runDecodeImage(request, post);
     return;
   }
   index(request);

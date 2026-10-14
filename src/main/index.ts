@@ -23,7 +23,7 @@ const service = new ProjectService(indexer, {
   importProgress: (progress) => send(mainWindow, 'import:progress', progress),
 });
 const exporter = new ExportService(indexer, (progress) => send(mainWindow, 'export:progress', progress), { luts: service });
-const actions = createActions(service, exporter, () => mainWindow);
+const actions = createActions(service, exporter, indexer, () => mainWindow);
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -68,6 +68,7 @@ function registerIpc(): void {
   );
   handle('export:run', (request) => actions.exportProject(request));
   handle('calibration:check', (request) => actions.checkCalibration(request));
+  handle('pattern:image', () => actions.openPatternImage());
   handle('lut:import', () => actions.importLut());
   handle('lut:data', (id) => service.lutData(id));
 }

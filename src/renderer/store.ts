@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import type { AdjustGroup } from '@core/project/adjustGroups';
 import type { ProjectPatch } from '@core/project/patch';
 import type { Adjust, Project } from '@core/project/types';
-import type { ExportProgress, ImportProgress, ProjectSnapshot } from '@shared/ipc';
+import type { ExportProgress, ImportProgress, PatternImage, ProjectSnapshot } from '@shared/ipc';
 import type { ViewMode } from '@shared/view';
 import { History } from './history';
 import { DEFAULT_PATTERN_DRAFT, type PatternDraft } from './pattern';
@@ -55,6 +55,20 @@ interface AppState {
   lutImportError: string | null;
   /** Черновик паттерна во вкладке «Цель»: в проект пишутся только клетки паттерна и цели (ADR 0023). */
   patternDraft: PatternDraft;
+  /**
+   * Открытый «Импорт паттерна» (ADR 0024): картинка-шаблон, прочитанная индексатором. Пока он открыт, сетка и
+   * инспектор неактивны. Картинка в проект не пишется; закрыли — пиксели отпущены.
+   */
+  patternImport: PatternImport | null;
+  /** Почему картинка-шаблон не открылась: показывается во вкладке «Цель». */
+  patternImageError: string | null;
+}
+
+export interface PatternImport {
+  /** Номер открытия: новая картинка — новый слой, со своим холстом и разметкой. */
+  id: number;
+  file: string;
+  image: PatternImage;
 }
 
 export const useAppStore = create<AppState>()(() => ({
@@ -76,6 +90,8 @@ export const useAppStore = create<AppState>()(() => ({
   exportProgress: null,
   lutImportError: null,
   patternDraft: DEFAULT_PATTERN_DRAFT,
+  patternImport: null,
+  patternImageError: null,
 }));
 
 // Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.
@@ -171,6 +187,8 @@ function receiveSnapshot(incoming: ProjectSnapshot | null): void {
     importProgress: sameProject ? current.importProgress : null,
     exportOpen: sameProject ? current.exportOpen : false,
     lutImportError: sameProject ? current.lutImportError : null,
+    patternImport: sameProject ? current.patternImport : null,
+    patternImageError: sameProject ? current.patternImageError : null,
   });
 }
 

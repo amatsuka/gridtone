@@ -7,6 +7,7 @@ import {
   clearSelection,
   closeEditor,
   closeExportDialog,
+  closePatternImport,
   isTextField,
   openEditor,
   removeSelectedEmpty,
@@ -41,7 +42,7 @@ const ORIGINAL_CODE = 'Backslash';
 const STEP_BY_ARROW: Record<string, -1 | 1> = { ArrowLeft: -1, ArrowRight: 1 };
 
 function onKeyDown(event: KeyboardEvent): void {
-  const { snapshot, groupsDialog, exportOpen, editorSlotId } = useAppStore.getState();
+  const { snapshot, groupsDialog, exportOpen, editorSlotId, patternImport } = useAppStore.getState();
   const editor = editorSlotId !== null;
   if (event.defaultPrevented || event.isComposing || !snapshot) return;
   // Диалоги групп и экспорта обрабатывают клавиши сами. Экспорт закрывается по Esc, даже если фокус
@@ -50,7 +51,12 @@ function onKeyDown(event: KeyboardEvent): void {
     closeExportDialog();
     event.preventDefault();
   }
-  if (groupsDialog || exportOpen) return;
+  // «Импорт паттерна» закрывается по Esc и из поля «Рядов»; под ним сетка не правится и не отменяется.
+  if (!exportOpen && patternImport && event.code === 'Escape') {
+    closePatternImport();
+    event.preventDefault();
+  }
+  if (groupsDialog || exportOpen || patternImport) return;
   const mod = event.metaKey || event.ctrlKey;
   const text = isTextField(event.target);
   // Стрелки в ползунке и выпадающем списке двигают их, а не плитки.

@@ -1,6 +1,7 @@
 import { utilityProcess, type UtilityProcess } from 'electron';
 import type { CardReport } from '@core/lut/calibration';
-import type { CardCheckJob, ExportJob, IndexJob, IndexerRequest, IndexerResponse } from '@shared/ipc';
+import type { CardCheckJob, DecodeImageJob, ExportJob, IndexJob, IndexerRequest, IndexerResponse, PatternImage } from '@shared/ipc';
+import type { PatternImagePort } from './actions';
 import type { ExportPort } from './export';
 import type { IndexerPort } from './project/service';
 import indexerPath from '../indexer/index?modulePath';
@@ -12,10 +13,10 @@ interface PendingJob {
 }
 
 /**
- * Запускает utility process по первому требованию и перезапускает, если он упал. Импорт, экспорт
- * и проверка калибровочной карты.
+ * Запускает utility process по первому требованию и перезапускает, если он упал. Импорт, экспорт,
+ * проверка калибровочной карты и чтение картинки-шаблона паттерна.
  */
-export class IndexerClient implements IndexerPort, ExportPort {
+export class IndexerClient implements IndexerPort, ExportPort, PatternImagePort {
   private child: UtilityProcess | null = null;
   private readonly jobs = new Map<string, PendingJob>();
 
@@ -59,6 +60,19 @@ export class IndexerClient implements IndexerPort, ExportPort {
     });
   }
 
+  decodeImage(job: Omit<DecodeImageJob, 'type'>): Promise<PatternImage> {
+    return new Promise((resolve, reject) => {
+      this.start({ type: 'decode-image', ...job }, {
+        onMessage: (message) => {
+          if (message.type !== 'image') return;
+          if (message.ok) resolve(message.image);
+          else reject(new Error(message.error));
+        },
+        onExit: (code) => reject(new Error(`Процесс чтения картинки завершился (код ${code})`)),
+      });
+    });
+  }
+
   dispose(): void {
     this.child?.kill();
     this.child = null;
@@ -75,8 +89,8 @@ export class IndexerClient implements IndexerPort, ExportPort {
     child.on('message', (message: IndexerResponse) => {
       const job = this.jobs.get(message.jobId);
       if (!job) return;
-      // Проверка карты отвечает одним сообщением 'card', без 'done'.
-      if (message.type === 'done' || message.type === 'card') this.jobs.delete(message.jobId);
+      // Проверка карты и чтение картинки отвечают одним сообщением 'card' или 'image', без 'done'.
+      if (message.type === 'done' || message.type === 'card' || message.type === 'image') this.jobs.delete(message.jobId);
       job.onMessage(message);
     });
     child.on('exit', (code) => {

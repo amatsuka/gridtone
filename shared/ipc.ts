@@ -119,6 +119,20 @@ export interface CalibrationCheckRequest {
 /** Отчёт по карте или ошибка: образа нет, копия его LUT пропала, файл не читается. */
 export type CalibrationCheckResult = { ok: true; file: string; lookName: string; report: CardReport } | { ok: false; error: string };
 
+/**
+ * Картинка-шаблон паттерна (docs/decisions/0024-pattern-image.md): прочитана рецептом цвета прокси (decodeSrgb)
+ * и уменьшена до PATTERN_IMAGE_MAX_SIDE по длинной стороне. В проект не попадает.
+ */
+export interface PatternImage {
+  width: number;
+  height: number;
+  /** RGBA 8 бит, строки сверху вниз; альфа — 255: прозрачность легла на белый. */
+  data: Uint8Array;
+}
+
+/** «Из изображения…»: пиксели картинки или ошибка чтения. */
+export type PatternImageResult = { ok: true; file: string; image: PatternImage } | { ok: false; error: string };
+
 export interface ExportStarted {
   jobId: string;
   /** Новая подпапка экспорта: каждый экспорт пишет в свою, ничего не перезаписывая. */
@@ -160,6 +174,8 @@ export interface InvokeMap {
   'export:run': { args: [request: ExportRequest]; result: ExportStarted | null };
   /** Спросить возвращённую калибровочную карту и сверить её с образом. null — отменено или проект уже другой. */
   'calibration:check': { args: [request: CalibrationCheckRequest]; result: CalibrationCheckResult | null };
+  /** Спросить картинку-шаблон паттерна и прочитать её. null — нет проекта или отменено. Проект не меняется. */
+  'pattern:image': { args: []; result: PatternImageResult | null };
   /** Спросить `.cube` и импортировать его новым образом. null — нет проекта или отменено. */
   'lut:import': { args: []; result: LutImportResult | null };
   /** Разобранный LUT по id из реестра открытого проекта. */
@@ -190,6 +206,7 @@ const invokeChannels = {
   'assets:import': true,
   'export:run': true,
   'calibration:check': true,
+  'pattern:image': true,
   'lut:import': true,
   'lut:data': true,
 } satisfies Record<InvokeChannel, true>;
@@ -299,7 +316,14 @@ export interface CardCheckJob {
   params: PipelineParams;
 }
 
-export type IndexerRequest = IndexJob | ExportJob | CardCheckJob;
+/** Картинка-шаблон паттерна: decodeSrgb, не больше PATTERN_IMAGE_MAX_SIDE по длинной стороне, RGBA 8 бит. */
+export interface DecodeImageJob {
+  type: 'decode-image';
+  jobId: string;
+  path: string;
+}
+
+export type IndexerRequest = IndexJob | ExportJob | CardCheckJob | DecodeImageJob;
 
 export type IndexedAsset = Omit<AssetRef, 'importedAt'>;
 
@@ -314,4 +338,7 @@ export type IndexerResponse =
   /** Проверка карты: последнее сообщение задачи, 'done' после него не приходит. */
   | { type: 'card'; jobId: string; ok: true; report: CardReport }
   | { type: 'card'; jobId: string; ok: false; error: string }
+  /** Картинка-шаблон: одно сообщение на задачу, 'done' после него не приходит. */
+  | { type: 'image'; jobId: string; ok: true; image: PatternImage }
+  | { type: 'image'; jobId: string; ok: false; error: string }
   | { type: 'done'; jobId: string };

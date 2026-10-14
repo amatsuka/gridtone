@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import {
   app,
@@ -7,14 +8,32 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron';
-import type { CalibrationCheckResult, ExportStarted, LutImportResult, ProjectSnapshot } from '@shared/ipc';
+import type {
+  CalibrationCheckResult,
+  DecodeImageJob,
+  ExportStarted,
+  LutImportResult,
+  PatternImage,
+  PatternImageResult,
+  ProjectSnapshot,
+} from '@shared/ipc';
 import { parseCalibrationRequest, parseExportRequest, type ExportService } from './export';
 import { IMPORT_EXTENSIONS, type ProjectService } from './project/service';
 
 export type Actions = ReturnType<typeof createActions>;
 
+/** utility process: чтение картинки-шаблона паттерна (docs/decisions/0024-pattern-image.md). */
+export interface PatternImagePort {
+  decodeImage(job: Omit<DecodeImageJob, 'type'>): Promise<PatternImage>;
+}
+
 /** Пользовательские действия с диалогами. Их вызывают и IPC, и меню. */
-export function createActions(service: ProjectService, exporter: ExportService, getWindow: () => BrowserWindow | null) {
+export function createActions(
+  service: ProjectService,
+  exporter: ExportService,
+  images: PatternImagePort,
+  getWindow: () => BrowserWindow | null,
+) {
   /** Папка последнего экспорта: диалог открывается в ней. Только до выхода из приложения. */
   let exportRoot: string | undefined;
 
@@ -167,6 +186,29 @@ export function createActions(service: ProjectService, exporter: ExportService, 
         return { ok: true, file, lookName: target.look.name, report: await exporter.checkCard(path, target.params) };
       } catch (err) {
         return { ok: false, error: `${file}: ${message(err)}` };
+      }
+    },
+
+    /**
+     * «Из изображения…» (docs/decisions/0024-pattern-image.md): картинку-шаблон спрашивает main, читает индексатор,
+     * renderer получает пиксели и сам ищет сетку. Проект не меняется; ошибка чтения возвращается в renderer.
+     */
+    async openPatternImage(): Promise<PatternImageResult | null> {
+      if (!service.hasProject) return null;
+      const result = await showOpen({
+        title: 'Паттерн из изображения',
+        message: 'Картинка с квадратами 3 × N: шаблон сетки, светлые и тёмные или цветные ячейки',
+        buttonLabel: 'Открыть',
+        properties: ['openFile'],
+        filters: [{ name: 'Изображения', extensions: IMPORT_EXTENSIONS }],
+      });
+      const path = result.filePaths[0];
+      if (result.canceled || path === undefined || !service.hasProject) return null;
+      const file = basename(path);
+      try {
+        return { ok: true, file, image: await images.decodeImage({ jobId: randomUUID(), path }) };
+      } catch (err) {
+        return { ok: false, error: `${file}: ${err instanceof Error ? err.message : String(err)}` };
       }
     },
 

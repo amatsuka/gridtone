@@ -4,6 +4,7 @@ import { GridView } from './components/GridView';
 import { GroupsDialog } from './components/GroupsDialog';
 import { ImportStatus } from './components/ImportStatus';
 import { Inspector } from './components/Inspector';
+import { PatternImport } from './components/PatternImport';
 import { PhotoEditor } from './components/PhotoEditor';
 import { Toolbar } from './components/Toolbar';
 import { connectFixes } from './fixes';
@@ -22,11 +23,12 @@ export function App() {
   const snapshot = useAppStore((state) => state.snapshot);
   const editorOpen = useAppStore((state) => state.editorSlotId !== null);
   const exportOpen = useAppStore((state) => state.exportOpen);
+  const patternImportOpen = useAppStore((state) => state.patternImport !== null);
 
   return (
     <div className="app">
-      {/* Под открытым редактором фото сетка и инспектор не получают ни фокуса, ни кликов. */}
-      <div className="app-body" inert={editorOpen || exportOpen}>
+      {/* Под открытым редактором фото и импортом паттерна сетка и инспектор не получают ни фокуса, ни кликов. */}
+      <div className="app-body" inert={editorOpen || exportOpen || patternImportOpen}>
         <Toolbar snapshot={snapshot} />
         <ImportStatus />
         <main className="main">
@@ -42,6 +44,7 @@ export function App() {
         </main>
       </div>
       <PhotoEditor />
+      <PatternImport />
       <GroupsDialog />
       <ExportDialog />
     </div>

@@ -11,7 +11,7 @@ import { moveSlots, shiftSlots } from '@core/project/order';
 import { assignSlots, insertEmptySlots, isEmptySlot, removeEmptySlots, setPublished } from '@core/project/slots';
 import type { Adjust, Crop, Pattern, Project, Slot } from '@core/project/types';
 import { isValidLookName, PINNED_MAX } from '@core/project/validate';
-import type { MenuCommand } from '@shared/ipc';
+import type { MenuCommand, PatternImageResult } from '@shared/ipc';
 import { isViewMode, type ViewMode } from '@shared/view';
 import type { PatternDraft } from './pattern';
 import { clickSelection, EMPTY_SELECTION, selectAll } from './selection';
@@ -159,6 +159,44 @@ export function clearPattern(): void {
     const base = original(draft.slots) as Slot[];
     assignSlots(draft.slots, base, clearTargets(base));
   });
+}
+
+// ─── Паттерн из изображения (docs/decisions/0024-pattern-image.md) ────────────
+
+let patternImportSeq = 0;
+
+/**
+ * «Из изображения…»: картинку спрашивает main, читает индексатор; renderer открывает «Импорт паттерна» с её
+ * пикселями. Ошибка чтения — во вкладке «Цель»; проект не меняется.
+ */
+export async function openPatternImage(): Promise<void> {
+  const { snapshot } = useAppStore.getState();
+  if (!snapshot) return;
+  useAppStore.setState({ patternImageError: null });
+  let result: PatternImageResult | null;
+  try {
+    result = await api.invoke('pattern:image');
+  } catch (err) {
+    result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  // Пока был открыт диалог, проект могли сменить.
+  if (!result || useAppStore.getState().snapshot?.dir !== snapshot.dir) return;
+  if (!result.ok) {
+    useAppStore.setState({ patternImageError: result.error });
+    return;
+  }
+  useAppStore.setState({ patternImport: { id: ++patternImportSeq, file: result.file, image: result.image } });
+}
+
+/** Esc и «Отмена»: слой закрывается, пиксели отпускаются, проект не меняется. */
+export function closePatternImport(): void {
+  if (useAppStore.getState().patternImport) useAppStore.setState({ patternImport: null });
+}
+
+/** «Применить» в «Импорте паттерна»: паттерн картинки и цели всех позиций — одна запись истории. */
+export function applyImagePattern(pattern: Pattern): void {
+  applyPatternToGrid(pattern);
+  closePatternImport();
 }
 
 function scrollToTile(slotId: string): void {
@@ -390,8 +428,8 @@ export function runMenuCommand(command: MenuCommand): void {
     document.execCommand(command);
     return;
   }
-  const { snapshot, groupsDialog, exportOpen } = useAppStore.getState();
-  if (!snapshot || groupsDialog || exportOpen) return;
+  const { snapshot, groupsDialog, exportOpen, patternImport } = useAppStore.getState();
+  if (!snapshot || groupsDialog || exportOpen || patternImport) return;
   if (command.startsWith('view:')) {
     const mode = command.slice('view:'.length);
     if (isViewMode(mode)) setViewMode(mode);

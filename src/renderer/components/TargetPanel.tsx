@@ -1,7 +1,8 @@
 // Вкладка «Цель» инспектора (spec, «Модуль 4. Паттерны»; docs/decisions/0023-patterns.md): паттерн из генератора
-// или строки-шаблона, превью периода, устойчивость к сдвигу, «Применить к сетке» и «Убрать цели»; цель выбранной
-// позиции. Клетки, цели и режим публикации считает core (`core/pattern/`); параметры генератора и строка —
-// черновик в сторе, в проект пишутся только паттерн и цели позиций одной записью истории.
+// или строки-шаблона, превью периода, устойчивость к сдвигу, «Применить к сетке» и «Убрать цели»; паттерн из
+// изображения (ADR 0024) — в «Импорте паттерна» поверх окна; цель выбранной позиции. Клетки, цели и режим
+// публикации считает core (`core/pattern/`); параметры генератора и строка — черновик в сторе, в проект пишутся
+// только паттерн и цели позиций одной записью истории.
 import { useMemo } from 'react';
 import { formatPart } from '@core/harmony/outliers';
 import {
@@ -23,18 +24,14 @@ import {
   type LevelParams,
   type TargetColor,
 } from '@core/pattern/levels';
-import {
-  PATTERN_SOURCE_LABELS,
-  periodCell,
-  POSTING_MODE_LABELS,
-  singlePostShift,
-} from '@core/pattern/pattern';
-import type { Pattern, Project, SlotTarget } from '@core/project/types';
+import { PATTERN_SOURCE_LABELS, periodCell, POSTING_MODE_LABELS } from '@core/pattern/pattern';
+import type { Project } from '@core/project/types';
 import { useGridAnalysis } from '../analysis';
-import { applyPatternToGrid, clearPattern, editGeneratorParams, editPatternDraft } from '../commands';
+import { applyPatternToGrid, clearPattern, editGeneratorParams, editPatternDraft, openPatternImage } from '../commands';
 import { draftPattern, targetCss, type PatternDraft, type PatternSource } from '../pattern';
 import { plural } from '../plural';
 import { useAppStore } from '../store';
+import { PatternPreview, PostingModeNote, targetTitle } from './PatternPreview';
 import { Slider } from './Slider';
 
 /** Цвет уровня, который ставит флажок «Цвет»: тёплый светлый, нейтрально-голубой средний, холодный тёмный. */
@@ -92,8 +89,29 @@ export function TargetPanel({ project }: { project: Project }) {
           Убрать цели
         </button>
       </div>
+      <h3>Из изображения</h3>
+      <ImageSource />
       <h3>Позиция</h3>
       <PositionTarget project={project} />
+    </div>
+  );
+}
+
+/** «Из изображения…»: картинку спрашивает main; сетку и цели показывает «Импорт паттерна». */
+function ImageSource() {
+  const error = useAppStore((state) => state.patternImageError);
+  return (
+    <div className="image-source" data-testid="image-source">
+      <p className="muted">
+        Картинка с квадратами 3 × N — шаблон из Pinterest, Canva или свой рисунок. Сетку найдём сами, её можно поправить;
+        у заливки цель жёсткая, у фото в ячейке — мягкая.
+      </p>
+      <button onClick={() => void openPatternImage()}>Из изображения…</button>
+      {error && (
+        <p className="pattern-error" role="alert" data-testid="pattern-image-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -346,51 +364,6 @@ function LevelControls({ draft }: { draft: PatternDraft }) {
         />
       )}
     </>
-  );
-}
-
-/** Период паттерна образцами: 3 × periodRows, левый верхний — позиция 0. */
-function PatternPreview({ pattern }: { pattern: Pattern }) {
-  return (
-    <div className="pattern-preview" data-testid="pattern-preview" data-rows={pattern.periodRows} data-cells={pattern.cells.length}>
-      {pattern.cells.map((cell, i) => (
-        <span
-          key={i}
-          className="pattern-cell"
-          data-testid="pattern-cell"
-          data-l={cell.L}
-          data-hue={cell.hue}
-          data-chroma={cell.chroma}
-          style={{ backgroundColor: targetCss(cell), color: cell.L > 0.62 ? '#111' : '#eee' }}
-          title={targetTitle(cell)}
-        >
-          {cell.L.toFixed(2)}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function targetTitle(target: SlotTarget): string {
-  const color = target.hue !== undefined ? `, тон ${Math.round(target.hue)}°` : '';
-  const chroma = target.chroma !== undefined ? `, хрома ${target.chroma.toFixed(3)}` : '';
-  return `L ${target.L.toFixed(2)}${color}${chroma}`;
-}
-
-/** Устойчивость к сдвигу с пояснением. */
-function PostingModeNote({ pattern }: { pattern: Pattern }) {
-  const shift = singlePostShift(pattern.cells);
-  const explanation =
-    shift === null
-      ? 'Новый пост сдвигает ленту на позицию, и этот паттерн разваливается. Публикуйте по три поста сразу: лента сдвинется на целый ряд.'
-      : shift === 0
-        ? 'Новый пост сдвигает ленту на позицию, а паттерн остаётся тем же: публиковать можно по одному.'
-        : `Новый пост сдвигает ленту на позицию — паттерн тот же, меняется только фаза (на ${shift} ${plural(shift, 'ряд', 'ряда', 'рядов')}): публиковать можно по одному.`;
-  return (
-    <div className="pattern-mode" data-testid="pattern-mode" data-mode={pattern.postingMode}>
-      <strong>{POSTING_MODE_LABELS[pattern.postingMode]}</strong>
-      <p className="muted">{explanation}</p>
-    </div>
   );
 }
 

@@ -1626,3 +1626,93 @@ button:disabled {
   aspect-ratio: 3 / 4;
   border-radius: 4px;
 }
+
+.pattern-cell.soft {
+  outline: 1px dashed currentColor;
+  outline-offset: -3px;
+}
+
+.image-source p {
+  margin: 0 0 8px;
+}
+
+/* ─── Импорт паттерна (ADR 0024): картинка-шаблон и сетка поверх, как в редакторе фото ─── */
+
+.pattern-import {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.pattern-import-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pattern-image {
+  position: absolute;
+}
+
+.pattern-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pattern-grid {
+  position: absolute;
+  overflow: visible;
+  touch-action: none;
+  user-select: none;
+}
+
+.pattern-grid-shade {
+  fill: rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+
+.pattern-grid-cell,
+.pattern-grid-sample {
+  fill: none;
+  stroke: #fff;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 80%));
+  pointer-events: none;
+}
+
+.pattern-grid-cell {
+  stroke-width: 1.5;
+}
+
+.pattern-grid-sample {
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  opacity: 0.8;
+}
+
+/* Зоны захвата краёв рамки и ячеек: прозрачная широкая линия, при наведении — подсветка. */
+.pattern-grid-handle {
+  stroke: transparent;
+  pointer-events: stroke;
+}
+
+.pattern-grid-handle.x {
+  cursor: ew-resize;
+}
+
+.pattern-grid-handle.y {
+  cursor: ns-resize;
+}
+
+.pattern-grid-handle:hover {
+  stroke: rgb(255 255 255 / 22%);
+}
+
+.grid-status {
+  margin: 0 0 10px;
+}
