@@ -1,8 +1,9 @@
 // Вкладка «Цель» инспектора (spec, «Модуль 4. Паттерны»; docs/decisions/0023-patterns.md): паттерн из генератора
 // или строки-шаблона, превью периода, устойчивость к сдвигу, «Применить к сетке» и «Убрать цели»; паттерн из
 // изображения (ADR 0024) — в «Импорте паттерна» поверх окна; цель выбранной позиции; подгонка сетки и поправки
-// к цели (ADR 0025, FitSection.tsx). Клетки, цели и режим публикации считает core (`core/pattern/`); параметры
-// генератора и строка — черновик в сторе, в проект пишутся только паттерн и цели позиций одной записью истории.
+// к цели (ADR 0025, FitSection.tsx); план контента (ADR 0026, ContentPlanSection.tsx). Клетки, цели, режим
+// публикации и план считает core (`core/pattern/`); параметры генератора и строка — черновик в сторе, в проект
+// пишутся только паттерн и цели позиций одной записью истории.
 import { useMemo } from 'react';
 import { formatPart } from '@core/harmony/outliers';
 import {
@@ -28,6 +29,7 @@ import { PATTERN_SOURCE_LABELS, periodCell, POSTING_MODE_LABELS } from '@core/pa
 import type { Project } from '@core/project/types';
 import { useGridAnalysis } from '../analysis';
 import { applyPatternToGrid, clearPattern, editGeneratorParams, editPatternDraft, openPatternImage } from '../commands';
+import { ContentPlanSection } from './ContentPlanSection';
 import { draftPattern, targetCss, type PatternDraft, type PatternSource } from '../pattern';
 import { plural } from '../plural';
 import { useAppStore } from '../store';
@@ -98,6 +100,8 @@ export function TargetPanel({ project }: { project: Project }) {
       <FitSection project={project} />
       <h3>Поправки к цели</h3>
       <TargetFixesSection project={project} />
+      <h3>План контента</h3>
+      <ContentPlanSection project={project} />
     </div>
   );
 }

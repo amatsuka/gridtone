@@ -1,5 +1,6 @@
-// Экспорт в utility process (docs/decisions/0014-lut-export.md, 0016-calibration-card.md, 0017-post-export.md):
-// запекание 33³–65³, PNG через sharp, посты и сетка из оригиналов не подвешивают ни main, ни интерфейс.
+// Экспорт в utility process (docs/decisions/0014-lut-export.md, 0016-calibration-card.md, 0017-post-export.md,
+// 0026-content-plan.md): запекание 33³–65³, PNG через sharp, посты и сетка из оригиналов, план контента не
+// подвешивают ни main, ни интерфейс.
 // Папку задачи создаёт main; файлы пишутся с флагом wx — существующий файл не перезаписывается никогда.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -7,15 +8,16 @@ import sharp from 'sharp';
 import { bakeLut } from '@core/lut/bake';
 import { lookCubeComments, writeCube } from '@core/lut/cube';
 import { HALD_LEVEL, haldGeometry, lutToHald } from '@core/lut/hald';
-import type { ExportJob, IndexerResponse, LutExportItem } from '@shared/ipc';
+import { targetGridImage } from '@core/pattern/targetGrid';
+import type { ExportJob, IndexerResponse, LutExportItem, PlanExportItem } from '@shared/ipc';
 import { cardPng } from './calibration';
 import { gridPng, postCube, postJpeg, type Rendered } from './posts';
 
-type ExportPlan = Pick<ExportJob, 'cardFile' | 'luts' | 'posts' | 'grid'>;
+type ExportPlan = Pick<ExportJob, 'cardFile' | 'luts' | 'posts' | 'grid' | 'plan'>;
 
 /**
  * Имена файлов задачи по порядку записи: карта; `.cube` и HaldCLUT каждого образа; посты в порядке
- * публикации — JPEG и `.cube`; сетка.
+ * публикации — JPEG и `.cube`; сетка; план контента — `План.md`, `План.csv`, `Цели.png`.
  */
 export function exportFiles(job: ExportPlan): string[] {
   return outputs(job).map(([file]) => file);
@@ -28,7 +30,7 @@ const plain = async (data: string | Buffer | Promise<Buffer>): Promise<Rendered>
   warnings: [],
 });
 
-function outputs({ cardFile, luts, posts, grid }: ExportPlan): Output[] {
+function outputs({ cardFile, luts, posts, grid, plan }: ExportPlan): Output[] {
   const list: Output[] = cardFile === null ? [] : [[cardFile, () => plain(cardPng())]];
   for (const item of luts) {
     if (item.cube) list.push([`${item.fileBase}.cube`, () => plain(cubeText(item))]);
@@ -39,7 +41,19 @@ function outputs({ cardFile, luts, posts, grid }: ExportPlan): Output[] {
     if (item.cube) list.push([`${item.fileBase}.cube`, async () => postCube(item)]);
   }
   if (grid) list.push([grid.file, () => gridPng(grid)]);
+  for (const { file, text } of plan?.texts ?? []) list.push([file, () => plain(text)]);
+  const image = plan?.image;
+  if (image) list.push([image.file, () => plain(targetsPng(image))]);
   return list;
+}
+
+/** `Цели.png`: пиксели целевой сетки считает core, RGB 8 бит со вшитым sRGB — как `Сетка.png`. */
+export async function targetsPng(image: NonNullable<PlanExportItem['image']>): Promise<Buffer> {
+  const { width, height, data } = targetGridImage(image.colors, image.ratio, image.columns);
+  return sharp(data, { raw: { width, height, channels: 3 } })
+    .withIccProfile('srgb')
+    .png({ compressionLevel: 6 })
+    .toBuffer();
 }
 
 /** `.cube` образа: решётка item.size³, 6 знаков, домен 0..1. */

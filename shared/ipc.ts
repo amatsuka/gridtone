@@ -95,6 +95,16 @@ export interface LutExportRequest {
   hald: boolean;
 }
 
+/** Раздел «План» в запросе экспорта (docs/decisions/0026-content-plan.md): какие файлы плана контента писать. */
+export interface PlanExportRequest {
+  /** `План.md` — таблица карточек. */
+  markdown: boolean;
+  /** `План.csv` — RFC 4180, UTF-8 с BOM. */
+  csv: boolean;
+  /** `Цели.png` — целевая сетка: плитки, залитые целями позиций. */
+  image: boolean;
+}
+
 /** Экран «Экспорт» (spec, «Экраны»); папку спрашивает main. */
 export interface ExportRequest {
   /** Проект, из которого экспортируем: если открыт уже другой, экспорт не начнётся. */
@@ -108,6 +118,8 @@ export interface ExportRequest {
   grid?: boolean;
   /** `.cube` связки «поправка фото + образ» на каждый пост. */
   postLuts?: boolean;
+  /** План контента: Markdown, CSV и картинка целевой сетки. */
+  plan?: PlanExportRequest;
 }
 
 /** «Проверить карту…»: карту, которую вернул редактор, main спрашивает диалогом и сверяет с образом. */
@@ -293,7 +305,18 @@ export interface GridExportItem {
 }
 
 /**
- * Экспорт в utility process: калибровочная карта, LUT образов, посты в порядке публикации, сетка.
+ * План контента (docs/decisions/0026-content-plan.md): тексты `План.md` и `План.csv` уже посчитал core в main,
+ * пиксели `Цели.png` core посчитает в utility process по цветам позиций — картинку не гонять через IPC.
+ */
+export interface PlanExportItem {
+  /** Файлы с готовым текстом: имя и содержимое (UTF-8). */
+  texts: { file: string; text: string }[];
+  /** `Цели.png`: образец цели каждой позиции по порядку сетки, null — цели нет. */
+  image: { file: string; ratio: Ratio; columns: number; colors: ([number, number, number] | null)[] } | null;
+}
+
+/**
+ * Экспорт в utility process: калибровочная карта, LUT образов, посты в порядке публикации, сетка, план контента.
  * Папка уже создана main; файлы в ней не перезаписываются.
  */
 export interface ExportJob {
@@ -305,6 +328,7 @@ export interface ExportJob {
   luts: LutExportItem[];
   posts: PostExportItem[];
   grid: GridExportItem | null;
+  plan: PlanExportItem | null;
 }
 
 /** Проверка возвращённой карты: чтение рецептом цвета прокси (ADR 0004), замер и диагноз core. */

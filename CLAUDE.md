@@ -65,6 +65,10 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
   Экспорт пишет только в новую подпапку и с флагом wx: существующие файлы не перезаписываются.
 - Посты и `Сетка.png` режутся из оригинала, сверенного по хэшу, по feedFrameTransform / gridWindowTransform;
   пиксели считает только core/image/render.ts с параметрами плитки — postPipeline (ADR 0017).
+- План контента — только contentPlan (core/pattern/plan.ts, ADR 0026): карточки по planOrder, цель — slot.target
+  как есть, подсказка — targetHint, образец — targetSwatch. Тексты `План.md` и `План.csv` — planMarkdown / planCsv,
+  пиксели `Цели.png` — targetGridImage (core/pattern/targetGrid.ts); utility process только пишет файлы.
+  План — производные данные, в проект и историю не пишется.
 - Новая зависимость — только с записью в docs/decisions/. npm 12 блокирует install-скрипты:
   если пакету он нужен, разрешать осознанно через `npm install-scripts approve <pkg>`.
 - В конце этапа обновить docs/progress.md: что сделано, решения, что дальше.

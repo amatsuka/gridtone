@@ -6,6 +6,10 @@ const MAX_LENGTH = 100;
 export const CARD_FILE_BASE = 'Калибровка';
 /** Сетка целиком (docs/decisions/0017-post-export.md): `Сетка.png`. */
 export const GRID_FILE_BASE = 'Сетка';
+/** План контента (docs/decisions/0026-content-plan.md): `План.md` и `План.csv`. */
+export const PLAN_FILE_BASE = 'План';
+/** Целевая сетка — заливки целей позиций: `Цели.png`. */
+export const TARGETS_FILE_BASE = 'Цели';
 /** Запрещены в именах файлов Windows; «/» и «:» — ещё и на macOS. */
 const FORBIDDEN = /[/\\:*?"<>|]/g;
 const CONTROL = /[\u0000-\u001f\u007f]+/g;
@@ -31,9 +35,14 @@ export function uniqueNames(names: readonly string[]): string[] {
   });
 }
 
-/** Имя файла без папки и расширения; разделители папок — и «/», и «\»: путь мог прийти с Windows. */
+/** Имя файла без папки; разделители папок — и «/», и «\»: путь мог прийти с Windows. */
+export function fileName(path: string): string {
+  return path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
+}
+
+/** Имя файла без папки и расширения. */
 export function fileStem(path: string): string {
-  const name = path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
+  const name = fileName(path);
   const dot = name.lastIndexOf('.');
   return dot > 0 ? name.slice(0, dot) : name;
 }

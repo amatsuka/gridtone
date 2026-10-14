@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { lookPipeline, postPipeline } from '@core/lut/bake';
 import { identityLut, type Lut3D } from '@core/lut/lut3d';
+import { hardTarget } from '@core/pattern/levels';
+import { clearTargets, makePattern, withPatternTargets } from '@core/pattern/pattern';
+import { contentPlan, planCsv, planMarkdown } from '@core/pattern/plan';
+import { targetGridColors } from '@core/pattern/targetGrid';
 import { createAdjust, createProject, createSlot } from '@core/project/defaults';
 import type { Project } from '@core/project/types';
 import type { CardReport } from '@core/lut/calibration';
@@ -190,7 +194,7 @@ describe('калибровочная карта (ADR 0016)', () => {
     const port = new FakePort();
     const progress: ExportProgress[] = [];
     const service = new ExportService(port, (p) => progress.push(p));
-    expect(await service.plan(project(), { dir: '/p', card: true })).toEqual({ notes: [], cardFile: 'Калибровка.png', luts: [], posts: [], grid: null });
+    expect(await service.plan(project(), { dir: '/p', card: true })).toEqual({ notes: [], cardFile: 'Калибровка.png', luts: [], posts: [], grid: null, plan: null });
     await expect(service.plan(project(), { dir: '/p', card: false })).rejects.toThrow(/Нечего/);
 
     const started = await service.start(root, project(), { dir: '/p', card: true });
@@ -378,5 +382,85 @@ describe('посты и сетка (ADR 0017)', () => {
         { file: 'Сетка.png', message: 'плитка 3 (рампа): из превью' },
       ],
     });
+  });
+});
+
+describe('план контента (ADR 0026)', () => {
+  const ASSET = '1111111111111111';
+  /** Фото, опубликованный пост и пустая позиция под шахматку LDL/DLD. */
+  function planned(): Project {
+    const p = project();
+    p.assets[ASSET] = { id: ASSET, path: '/фото/кадр, 1.jpg', hash: ASSET.padEnd(64, 'f'), w: 1080, h: 1440, format: 'jpeg', icc: 'embedded', importedAt: '' };
+    p.assets['2222222222222222'] = { ...p.assets[ASSET]!, id: '2222222222222222', path: '/фото/кадр 2.jpg' };
+    p.slots = [createSlot('e'), createSlot('a', ASSET), { ...createSlot('b', '2222222222222222'), state: 'published' }];
+    const pattern = makePattern('string', [hardTarget(0.8), hardTarget(0.44), hardTarget(0.8)]);
+    p.pattern = pattern;
+    p.slots = withPatternTargets(p.slots, pattern, 0);
+    return p;
+  }
+
+  test('запрос: три флага формата, иначе ошибка', () => {
+    const ok = { dir: '/p', plan: { markdown: true, csv: false, image: true } };
+    expect(parseExportRequest(ok)).toEqual(ok);
+    expect(() => parseExportRequest({ dir: '/p', plan: true })).toThrow(/плана/);
+    expect(() => parseExportRequest({ dir: '/p', plan: { markdown: true, csv: false } })).toThrow(/плана/);
+    expect(() => parseExportRequest({ dir: '/p', plan: { markdown: 1, csv: false, image: false } })).toThrow(/плана/);
+  });
+
+  test('тексты — planMarkdown и planCsv core по плану проекта, Цели.png — цвета целей позиций; план — без LUT и постов', async () => {
+    const p = planned();
+    const service = new ExportService(new FakePort(), () => {});
+    const result = await service.plan(p, { dir: '/p', plan: { markdown: true, csv: true, image: true } });
+    const plan = contentPlan(p);
+    expect(result.plan).toEqual({
+      texts: [
+        { file: 'План.md', text: planMarkdown(plan, 'Сетка') },
+        { file: 'План.csv', text: planCsv(plan) },
+      ],
+      image: { file: 'Цели.png', ratio: '3:4', columns: 3, colors: targetGridColors(p) },
+    });
+    expect(result.plan?.image?.colors).toHaveLength(3);
+    expect([result.cardFile, result.luts, result.posts, result.grid, result.notes]).toEqual([null, [], [], null, []]);
+    expect(planCsv(plan)).toContain('"кадр, 1.jpg"');
+    const only = await service.plan(p, { dir: '/p', plan: { markdown: false, csv: true, image: false } });
+    expect(only.plan).toEqual({ texts: [{ file: 'План.csv', text: planCsv(plan) }], image: null });
+  });
+
+  test('имена плана заняты раньше образов; ход считает файлы плана', async () => {
+    const p = planned();
+    p.looks[0]!.name = 'План';
+    p.looks[1]!.name = 'цели';
+    const port = new FakePort();
+    const progress: ExportProgress[] = [];
+    const service = new ExportService(port, (x) => progress.push(x));
+    const request = {
+      dir: '/p',
+      lut: { looks: [{ id: 'a', size: 33 as const }, { id: 'b', size: 33 as const }], cube: true, hald: true },
+      plan: { markdown: true, csv: true, image: true },
+    };
+    expect((await service.plan(p, request)).luts.map((i) => i.fileBase)).toEqual(['План 2', 'цели 2']);
+    // Без картинки «Цели» свободно.
+    expect((await service.plan(p, { ...request, plan: { markdown: true, csv: false, image: false } })).luts.map((i) => i.fileBase)).toEqual(['План 2', 'цели']);
+    await service.start(root, p, request);
+    expect(progress.at(-1)?.total).toBe(4 + 3);
+    expect(port.jobs[0]?.job.plan?.texts.map((t) => t.file)).toEqual(['План.md', 'План.csv']);
+  });
+
+  test('формат не выбран, позиций нет, целей нет — ошибка до диалога', async () => {
+    const service = new ExportService(new FakePort(), () => {});
+    const p = planned();
+    await expect(service.plan(p, { dir: '/p', plan: { markdown: false, csv: false, image: false } })).rejects.toThrow(/формат плана/);
+    const published = planned();
+    for (const slot of published.slots) if (slot.assetId) slot.state = 'published';
+    published.slots = published.slots.filter((slot) => slot.assetId);
+    await expect(service.plan(published, { dir: '/p', plan: { markdown: true, csv: false, image: false } })).rejects.toThrow(/нет позиций/);
+    // Картинка целей не требует позиций в плане — опубликованные тоже на ней.
+    expect((await service.plan(published, { dir: '/p', plan: { markdown: false, csv: false, image: true } })).plan?.image).not.toBeNull();
+    const plain = planned();
+    delete plain.pattern;
+    plain.slots = clearTargets(plain.slots);
+    await expect(service.plan(plain, { dir: '/p', plan: { markdown: false, csv: false, image: true } })).rejects.toThrow(/нет целей/);
+    expect((await service.plan(plain, { dir: '/p', plan: { markdown: true, csv: true, image: false } })).plan?.texts).toHaveLength(2);
+    await expect(service.plan(project(), { dir: '/p', plan: { markdown: false, csv: false, image: true } })).rejects.toThrow(/нет плиток/);
   });
 });

@@ -1,10 +1,12 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { bakeLut, lookPipeline } from '@core/lut/bake';
+import { targetGridImage } from '@core/pattern/targetGrid';
 import { createAdjust } from '@core/project/defaults';
-import type { IndexerResponse, LutExportItem } from '@shared/ipc';
+import type { IndexerResponse, LutExportItem, PlanExportItem } from '@shared/ipc';
 import { exportFiles, runExport } from '../../src/indexer/export';
 import { readCube, readHald } from '../fixtures/lut';
 
@@ -24,7 +26,7 @@ function item(fileBase: string, patch: Partial<LutExportItem> = {}): LutExportIt
 
 async function run(dir: string, items: LutExportItem[], cardFile: string | null = null): Promise<IndexerResponse[]> {
   const messages: IndexerResponse[] = [];
-  await runExport({ type: 'export', jobId: 'job', dir, cardFile, luts: items, posts: [], grid: null }, (m) => messages.push(m));
+  await runExport({ type: 'export', jobId: 'job', dir, cardFile, luts: items, posts: [], grid: null, plan: null }, (m) => messages.push(m));
   return messages;
 }
 
@@ -34,7 +36,7 @@ describe('экспорт LUT в utility process', () => {
     await mkdir(dir);
     const items = [item('Плёнка'), item('Излом', { size: 65, hald: false, title: 'Излом "крутой"' })];
     const messages = await run(dir, items);
-    expect(exportFiles({ cardFile: null, luts: items, posts: [], grid: null })).toEqual(['Плёнка.cube', 'Плёнка.png', 'Излом.cube']);
+    expect(exportFiles({ cardFile: null, luts: items, posts: [], grid: null, plan: null })).toEqual(['Плёнка.cube', 'Плёнка.png', 'Излом.cube']);
     expect(messages).toEqual([
       { type: 'file', jobId: 'job', file: 'Плёнка.cube', ok: true },
       { type: 'file', jobId: 'job', file: 'Плёнка.png', ok: true },
@@ -66,7 +68,7 @@ describe('экспорт LUT в utility process', () => {
     const dir = join(root, 'card');
     await mkdir(dir);
     const items = [item('Калибровка 2', { hald: false })];
-    expect(exportFiles({ cardFile: 'Калибровка.png', luts: items, posts: [], grid: null })).toEqual(['Калибровка.png', 'Калибровка 2.cube']);
+    expect(exportFiles({ cardFile: 'Калибровка.png', luts: items, posts: [], grid: null, plan: null })).toEqual(['Калибровка.png', 'Калибровка 2.cube']);
     expect((await run(dir, items, 'Калибровка.png')).map((m) => (m.type === 'file' ? m.file : m.type))).toEqual([
       'Калибровка.png',
       'Калибровка 2.cube',
@@ -90,5 +92,53 @@ describe('экспорт LUT в utility process', () => {
     expect(messages[1]).toEqual({ type: 'file', jobId: 'job', file: 'Другой.cube', ok: true });
     expect(messages[2]).toEqual({ type: 'done', jobId: 'job' });
     expect(await readFile(join(dir, 'Плёнка.cube'), 'utf8')).toBe('чужой файл');
+  });
+});
+
+describe('план контента (ADR 0026)', () => {
+  const plan: PlanExportItem = {
+    texts: [
+      { file: 'План.md', text: '# План контента — Лента\n' },
+      { file: 'План.csv', text: '﻿Номер,Подсказка\r\n1,"средний, тёплый"\r\n' },
+    ],
+    image: { file: 'Цели.png', ratio: '3:4', columns: 3, colors: [[200, 10, 20], null, [0, 128, 255], [7, 8, 9]] },
+  };
+
+  test('тексты — байт в байт в UTF-8 (CSV с BOM), Цели.png — пиксели core с вшитым sRGB; после сетки', async () => {
+    const dir = join(root, 'plan');
+    await mkdir(dir);
+    const job = { cardFile: null, luts: [item('Плёнка', { hald: false })], posts: [], grid: null, plan };
+    expect(exportFiles(job)).toEqual(['Плёнка.cube', 'План.md', 'План.csv', 'Цели.png']);
+    const messages: IndexerResponse[] = [];
+    await runExport({ type: 'export', jobId: 'job', dir, ...job }, (m) => messages.push(m));
+    expect(messages.map((m) => (m.type === 'file' ? [m.file, m.ok] : m.type))).toEqual([
+      ['Плёнка.cube', true],
+      ['План.md', true],
+      ['План.csv', true],
+      ['Цели.png', true],
+      'done',
+    ]);
+    expect(await readFile(join(dir, 'План.md'), 'utf8')).toBe(plan.texts[0]!.text);
+    const csv = await readFile(join(dir, 'План.csv'));
+    expect([...csv.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(csv.equals(Buffer.from(plan.texts[1]!.text, 'utf8'))).toBe(true);
+
+    const png = join(dir, 'Цели.png');
+    const meta = await sharp(png).metadata();
+    expect([meta.format, meta.width, meta.height, meta.channels, meta.depth, meta.hasProfile]).toEqual(['png', 1628, 1444, 3, 'uchar', true]);
+    const { data } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+    const expected = targetGridImage(plan.image!.colors, '3:4', 3);
+    expect(Buffer.from(expected.data).equals(data)).toBe(true);
+  });
+
+  test('существующий файл плана не перезаписывается', async () => {
+    const dir = join(root, 'plan-existing');
+    await mkdir(dir);
+    await writeFile(join(dir, 'План.md'), 'чужой план');
+    const messages: IndexerResponse[] = [];
+    await runExport({ type: 'export', jobId: 'job', dir, cardFile: null, luts: [], posts: [], grid: null, plan }, (m) => messages.push(m));
+    expect(messages[0]).toMatchObject({ type: 'file', file: 'План.md', ok: false });
+    expect(messages.slice(1, 3).map((m) => m.type === 'file' && m.ok)).toEqual([true, true]);
+    expect(await readFile(join(dir, 'План.md'), 'utf8')).toBe('чужой план');
   });
 });

@@ -11,7 +11,7 @@ import type { Project } from '@core/project/types';
 import { useGridAnalysis } from '../analysis';
 import { applyTileFixes, clickTileInAnalysis, fitTiles } from '../commands';
 import { useFixStore } from '../fixes';
-import { useGridFit } from '../fit';
+import { unavailableSlots, useGridFit } from '../fit';
 import { useMetricsStore } from '../metrics';
 import { plural } from '../plural';
 import { useAppStore } from '../store';
@@ -31,6 +31,7 @@ const formatCost = (cost: number) => cost.toFixed(1);
 export function FitSection({ project }: { project: Project }) {
   const result = useGridFit();
   const { done, total } = useMetricsStore((state) => state.progress);
+  const assets = useAppStore((state) => state.snapshot?.assets);
   if (!project.pattern || !result || result.kind === 'none') {
     return (
       <p className="muted" data-testid="fit" data-state="none">
@@ -39,6 +40,20 @@ export function FitSection({ project }: { project: Project }) {
     );
   }
   if (result.kind === 'pending') {
+    // Превью не построено (оригинал пропал): признаков этих плиток не будет, «Считаем…» висело бы вечно.
+    const unavailable = unavailableSlots(project, assets, result.missing);
+    if (unavailable.length > 0) {
+      const positions = unavailable.map((id) => project.slots.findIndex((slot) => slot.id === id) + 1);
+      const n = unavailable.length;
+      return (
+        <p className="muted" data-testid="fit" data-state="unavailable" data-missing={n}>
+          Нет данных для {n} {plural(n, 'плитки', 'плиток', 'плиток')} (
+          {plural(n, 'позиция', 'позиции', 'позиции')} {positions.join(', ')}): превью не построено — оригинал пропал или
+          изменился. Подгонке нужны признаки всех фото ленты: верните {plural(n, 'оригинал', 'оригиналы', 'оригиналы')} на
+          место и откройте проект заново.
+        </p>
+      );
+    }
     return (
       <p className="muted" data-testid="fit" data-state="pending">
         Считаем признаки плиток…{done < total ? ` ${done} из ${total}` : ''}

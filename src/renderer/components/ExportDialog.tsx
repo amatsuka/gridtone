@@ -2,17 +2,22 @@ import { useEffect, useState } from 'react';
 import type { Rgb } from '@core/color/srgb';
 import { CARD_HEIGHT, CARD_LIMITS, CARD_WIDTH, type CardReport } from '@core/lut/calibration';
 import { LUT_CHECK_LIMITS, type LutCheck, type LutExportSize } from '@core/lut/verify';
+import { contentPlan } from '@core/pattern/plan';
+import { POSTING_MODE_LABELS } from '@core/pattern/pattern';
+import { targetGridColors } from '@core/pattern/targetGrid';
 import { GRID_TILE_WIDTH, planNotes, planOrder, postSize, publishOrder } from '@core/project/publish';
-import type { Look } from '@core/project/types';
-import type { CalibrationCheckResult, ExportProgress, ExportStarted, ProjectSnapshot } from '@shared/ipc';
+import type { Look, Project } from '@core/project/types';
+import type { CalibrationCheckResult, ExportProgress, ExportStarted, PlanExportRequest, ProjectSnapshot } from '@shared/ipc';
 import { closeExportDialog } from '../commands';
 import { lutCheckKey, requestLutCheck, useLutChecks, type LutCheckResult } from '../lutCheck';
 import { lookLut, useLutStore, type LookLut } from '../luts';
+import { plural } from '../plural';
 import { api, useAppStore } from '../store';
 
 /**
  * Экран «Экспорт» (spec, «Экраны»). Разделы: LUT (docs/decisions/0014-lut-export.md), посты и сетка
- * (docs/decisions/0017-post-export.md), калибровочная карта (docs/decisions/0016-calibration-card.md).
+ * (docs/decisions/0017-post-export.md), план контента (docs/decisions/0026-content-plan.md), калибровочная
+ * карта (docs/decisions/0016-calibration-card.md).
  */
 export function ExportDialog() {
   const open = useAppStore((state) => state.exportOpen);
@@ -38,6 +43,8 @@ function ExportForm() {
   const [card, setCard] = useState(false);
   /** Посты, сетка и LUT постов пишутся из оригиналов и занимают время: по умолчанию не отмечены. */
   const [posts, setPosts] = useState<PostsChoice>({ posts: false, grid: false, postLuts: false });
+  /** План — по желанию, как посты: прежние экспорты по умолчанию не меняются. */
+  const [plan, setPlan] = useState<PlanExportRequest>({ markdown: false, csv: false, image: false });
   const [run, setRun] = useState<RunState>({ state: 'idle' });
 
   // LUT образа входит в проверку (ADR 0015): пока его таблица едет из main, проверка ждёт.
@@ -68,8 +75,16 @@ function ExportForm() {
   const postCount = publishOrder(snapshot.project.slots, snapshot.project.grid.pinned).length;
   const postSection = postCount > 0 && (posts.posts || posts.postLuts);
   const gridSection = snapshot.project.slots.length > 0 && posts.grid;
+  const planChoice = planAvailability(snapshot.project);
+  const planRequest: PlanExportRequest = {
+    markdown: plan.markdown && planChoice.texts,
+    csv: plan.csv && planChoice.texts,
+    image: plan.image && planChoice.image,
+  };
+  const planSection = planRequest.markdown || planRequest.csv || planRequest.image;
   const ready =
-    (lutSection || card || postSection || gridSection) && (!lutSection || chosen.every((look) => !cube || sizeOf(look) !== undefined));
+    (lutSection || card || postSection || gridSection || planSection) &&
+    (!lutSection || chosen.every((look) => !cube || sizeOf(look) !== undefined));
 
   const toggle = (id: string) =>
     setSelected((now) => {
@@ -88,6 +103,7 @@ function ExportForm() {
         ...(postSection && posts.posts ? { posts: true } : {}),
         ...(postSection && posts.postLuts ? { postLuts: true } : {}),
         ...(gridSection ? { grid: true } : {}),
+        ...(planSection ? { plan: planRequest } : {}),
       });
       setRun(started ? { state: 'started', job: started } : { state: 'idle' });
     } catch (err) {
@@ -152,6 +168,8 @@ function ExportForm() {
         </section>
 
         <PostsSection snapshot={snapshot} choice={posts} onChange={setPosts} />
+
+        <PlanSection project={snapshot.project} choice={plan} onChange={setPlan} />
 
         <CalibrationSection dir={snapshot.dir} looks={looks} card={card} onCard={setCard} />
 
@@ -362,6 +380,65 @@ function PostsSection({
           Постов без оригинала или с изменившимся оригиналом: {missing}. Они будут пропущены, в сетку попадёт превью.
         </p>
       )}
+    </section>
+  );
+}
+
+/** Что из плана можно экспортировать: тексты — если в плане есть позиции, картинку — если у позиций есть цели. */
+function planAvailability(project: Project): { texts: boolean; image: boolean } {
+  return {
+    texts: planOrder(project.slots, project.grid.pinned).length > 0,
+    image: targetGridColors(project).some((color) => color !== null),
+  };
+}
+
+/**
+ * План контента (docs/decisions/0026-content-plan.md): `План.md` и `План.csv` — карточки в порядке публикации,
+ * `Цели.png` — целевая сетка в раскладке `Сетка.png`. Предупреждения плана — те же, что во вкладке «Цель».
+ */
+function PlanSection({
+  project,
+  choice,
+  onChange,
+}: {
+  project: Project;
+  choice: PlanExportRequest;
+  onChange: (choice: PlanExportRequest) => void;
+}) {
+  const plan = contentPlan(project);
+  const { texts, image } = planAvailability(project);
+  const toggle = (key: keyof PlanExportRequest) => onChange({ ...choice, [key]: !choice[key] });
+  const count = plan.cards.length;
+  return (
+    <section className="export-section" data-testid="plan-section">
+      <h3>План</h3>
+      <div className="export-formats">
+        <label className="check">
+          <input type="checkbox" checked={choice.markdown && texts} disabled={!texts} onChange={() => toggle('markdown')} />
+          План.md
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={choice.csv && texts} disabled={!texts} onChange={() => toggle('csv')} />
+          План.csv
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={choice.image && image} disabled={!image} onChange={() => toggle('image')} />
+          Цели.png
+        </label>
+      </div>
+      <p className="muted export-note" data-testid="plan-count">
+        {count === 0
+          ? 'В плане нет позиций: запланированных постов и пустых позиций нет.'
+          : `${count} ${plural(count, 'позиция', 'позиции', 'позиций')} плана в порядке публикации${
+              plan.pattern ? ` (${POSTING_MODE_LABELS[plan.pattern.postingMode].toLowerCase()})` : ''
+            }: номер, цель, образец цвета и подсказка. CSV — запятая, UTF-8, точка в числах.`}
+        {image ? ` Цели.png — плитки ${GRID_TILE_WIDTH} px, как Сетка.png, залиты целями позиций.` : ' У позиций нет целей — Цели.png не экспортируется.'}
+      </p>
+      {plan.warnings.map((warning) => (
+        <p key={warning} className="export-warning" data-testid="plan-note">
+          {warning}
+        </p>
+      ))}
     </section>
   );
 }

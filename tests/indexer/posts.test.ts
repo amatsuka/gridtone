@@ -39,7 +39,7 @@ function post(fileBase: string, src: ExportSource, patch: Partial<PostExportItem
 async function run(dir: string, posts: PostExportItem[], grid: GridExportItem | null = null): Promise<IndexerResponse[]> {
   await mkdir(dir, { recursive: true });
   const messages: IndexerResponse[] = [];
-  await runExport({ type: 'export', jobId: 'job', dir, cardFile: null, luts: [], posts, grid }, (m) => messages.push(m));
+  await runExport({ type: 'export', jobId: 'job', dir, cardFile: null, luts: [], posts, grid, plan: null }, (m) => messages.push(m));
   return messages;
 }
 
@@ -218,7 +218,7 @@ describe('пост из оригинала', () => {
     });
     const dir = join(root, 'cube');
     const items = [post('1 — рампа', src, { params, jpeg: false, cube: true }), post('2 — излом', src, { params: kink, jpeg: false, cube: true })];
-    expect(exportFiles({ cardFile: null, luts: [], posts: items, grid: null })).toEqual(['1 — рампа.cube', '2 — излом.cube']);
+    expect(exportFiles({ cardFile: null, luts: [], posts: items, grid: null, plan: null })).toEqual(['1 — рампа.cube', '2 — излом.cube']);
     expect((await run(dir, items)).every((m) => m.type === 'done' || (m.type === 'file' && m.ok))).toBe(true);
     const text = await readFile(join(dir, '1 — рампа.cube'), 'utf8');
     expect(text).toMatch(/^# Gridtone — пост «1 — рампа»: поправка фото и образ/);

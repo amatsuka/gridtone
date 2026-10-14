@@ -95,10 +95,17 @@ export function planNotes(entries: readonly PlanEntry[]): string[] {
   const empty = entries.filter((entry) => !entry.photo).map((entry) => entry.number);
   if (empty.length === 1) notes.push(`Пост ${empty[0]} — пустая позиция: номер пропущен, файла нет.`);
   else if (empty.length > 1) notes.push(`Посты ${formatNumbers(empty)} — пустые позиции: номера пропущены, файлов нет.`);
-  const below = entries.filter((entry) => entry.belowPublished).map((entry) => entry.number);
-  if (below.length === 1) notes.push(`Пост ${below[0]} ниже опубликованного: на этом месте его не опубликовать.`);
-  else if (below.length > 1) notes.push(`Посты ${formatNumbers(below)} ниже опубликованного: на этих местах их не опубликовать.`);
+  const below = belowPublishedNote(entries);
+  if (below) notes.push(below);
   return notes;
+}
+
+/** «Пост 4 ниже опубликованного…» — для экспорта постов и плана контента; null — таких позиций нет. */
+export function belowPublishedNote(entries: readonly Pick<PlanEntry, 'number' | 'belowPublished'>[]): string | null {
+  const below = entries.filter((entry) => entry.belowPublished).map((entry) => entry.number);
+  if (below.length === 1) return `Пост ${below[0]} ниже опубликованного: на этом месте его не опубликовать.`;
+  if (below.length > 1) return `Посты ${formatNumbers(below)} ниже опубликованного: на этих местах их не опубликовать.`;
+  return null;
 }
 
 /** Пост для имени файла: номер в плане, имя оригинала, закреплять ли. */

@@ -1,7 +1,7 @@
 // Экспорт (spec, «Экраны» → «Экспорт»; docs/decisions/0014-lut-export.md, 0016-calibration-card.md,
-// 0017-post-export.md). main проверяет запрос renderer, создаёт новую подпапку и отдаёт запекание и запись
-// utility process; ход экспорта уходит в renderer событиями. Там же проверяется возвращённая калибровочная
-// карта. Диалоги — в actions.ts, здесь Electron не нужен.
+// 0017-post-export.md, 0026-content-plan.md). main проверяет запрос renderer, создаёт новую подпапку и отдаёт
+// запекание и запись utility process; ход экспорта уходит в renderer событиями. Там же проверяется возвращённая
+// калибровочная карта. Диалоги — в actions.ts, здесь Electron не нужен.
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -10,7 +10,18 @@ import { lookPipeline, postPipeline } from '@core/lut/bake';
 import type { CardReport } from '@core/lut/calibration';
 import type { Lut3D } from '@core/lut/lut3d';
 import { LUT_EXPORT_SIZES, type LutExportSize } from '@core/lut/verify';
-import { CARD_FILE_BASE, GRID_FILE_BASE, exportFolderName, fileStem, safeFileName, uniqueNames } from '@core/project/fileNames';
+import { contentPlan, planCsv, planMarkdown } from '@core/pattern/plan';
+import { targetGridColors } from '@core/pattern/targetGrid';
+import {
+  CARD_FILE_BASE,
+  GRID_FILE_BASE,
+  PLAN_FILE_BASE,
+  TARGETS_FILE_BASE,
+  exportFolderName,
+  fileStem,
+  safeFileName,
+  uniqueNames,
+} from '@core/project/fileNames';
 import { isRecord } from '@core/project/json';
 import { planNotes, planOrder, postFileBases } from '@core/project/publish';
 import type { AssetRef, Look, Project, Slot } from '@core/project/types';
@@ -25,6 +36,8 @@ import type {
   IndexerResponse,
   LutExportItem,
   LutExportRequest,
+  PlanExportItem,
+  PlanExportRequest,
   PostExportItem,
 } from '@shared/ipc';
 import { proxyFile } from './project/paths';
@@ -70,8 +83,17 @@ export function parseExportRequest(value: unknown): ExportRequest {
     if (typeof flag !== 'boolean') throw new Error(`Неверный раздел ${SECTION_NAMES[key]} в запросе экспорта`);
     request[key] = flag;
   }
+  const plan = value['plan'];
+  if (plan !== undefined) {
+    if (!isRecord(plan) || PLAN_FORMATS.some((key) => typeof plan[key] !== 'boolean')) {
+      throw new Error('Неверный раздел плана в запросе экспорта');
+    }
+    request.plan = { markdown: plan['markdown'] as boolean, csv: plan['csv'] as boolean, image: plan['image'] as boolean };
+  }
   return request;
 }
+
+const PLAN_FORMATS = ['markdown', 'csv', 'image'] as const;
 
 const SECTION_NAMES = { card: 'карты', posts: 'постов', grid: 'сетки', postLuts: 'LUT постов' } as const;
 
@@ -200,6 +222,30 @@ export function gridExportItem(
   };
 }
 
+/**
+ * План контента (docs/decisions/0026-content-plan.md): `План.md` и `План.csv` — тексты core по плану проекта
+ * (contentPlan), `Цели.png` — цвета целей позиций, пиксели посчитает core в utility process. Бросает до диалога,
+ * если формат не выбран, в плане нет позиций или у позиций нет целей.
+ */
+export function planExportItem(project: Project, request: PlanExportRequest): PlanExportItem {
+  if (!request.markdown && !request.csv && !request.image) throw new Error('Не выбран ни один формат плана');
+  const plan = contentPlan(project);
+  if ((request.markdown || request.csv) && plan.cards.length === 0) {
+    throw new Error('В плане нет позиций: в сетке нет запланированных постов и пустых позиций');
+  }
+  const texts: PlanExportItem['texts'] = [];
+  if (request.markdown) texts.push({ file: `${PLAN_FILE_BASE}.md`, text: planMarkdown(plan, project.name) });
+  if (request.csv) texts.push({ file: `${PLAN_FILE_BASE}.csv`, text: planCsv(plan) });
+  let image: PlanExportItem['image'] = null;
+  if (request.image) {
+    if (project.slots.length === 0) throw new Error('В сетке нет плиток');
+    const colors = targetGridColors(project);
+    if (colors.every((color) => color === null)) throw new Error('У позиций нет целей: примените паттерн к сетке');
+    image = { file: `${TARGETS_FILE_BASE}.png`, ratio: project.grid.ratio, columns: project.grid.columns, colors };
+  }
+  return { texts, image };
+}
+
 /** Новая папка name в root; если такая есть — «name (2)» и далее. Существующие папки не трогаются. */
 export async function createExportFolder(root: string, name: string): Promise<string> {
   for (let n = 1; ; n++) {
@@ -217,7 +263,7 @@ export async function createExportFolder(root: string, name: string): Promise<st
  * Что пишет задача экспорта: карта (имя файла или null), LUT образов, посты и сетка. notes — оговорки плана
  * публикации (пустые позиции, пост ниже опубликованного): они идут в отчёт сразу, без файла.
  */
-export type ExportPlan = Pick<ExportJob, 'cardFile' | 'luts' | 'posts' | 'grid'> & { notes: string[] };
+export type ExportPlan = Pick<ExportJob, 'cardFile' | 'luts' | 'posts' | 'grid' | 'plan'> & { notes: string[] };
 
 export interface ExportServiceOptions {
   luts?: LutSource;
@@ -225,10 +271,11 @@ export interface ExportServiceOptions {
 }
 
 /** Файлов в задаче: столько сообщений 'file' придёт из utility process. */
-export function exportFileCount({ cardFile, luts, posts, grid }: Omit<ExportPlan, 'notes'>): number {
+export function exportFileCount({ cardFile, luts, posts, grid, plan }: Omit<ExportPlan, 'notes'>): number {
   const lutFiles = luts.reduce((n, item) => n + Number(item.cube) + Number(item.hald), 0);
   const postFiles = posts.reduce((n, item) => n + Number(item.jpeg) + Number(item.cube), 0);
-  return Number(cardFile !== null) + lutFiles + postFiles + Number(grid !== null);
+  const planFiles = plan ? plan.texts.length + Number(plan.image !== null) : 0;
+  return Number(cardFile !== null) + lutFiles + postFiles + Number(grid !== null) + planFiles;
 }
 
 export class ExportService {
@@ -252,10 +299,17 @@ export class ExportService {
    */
   async plan(project: Project, request: ExportRequest): Promise<ExportPlan> {
     const posts = request.posts === true || request.postLuts === true;
-    if (!request.lut && !request.card && !posts && !request.grid) throw new Error('Нечего экспортировать');
+    if (!request.lut && !request.card && !posts && !request.grid && !request.plan) throw new Error('Нечего экспортировать');
     const cardFile = request.card ? `${CARD_FILE_BASE}.png` : null;
-    // Имена из одной подпапки не сталкиваются: карта и сетка, затем образы, затем посты.
-    const reserved = [...(cardFile === null ? [] : [CARD_FILE_BASE]), ...(request.grid ? [GRID_FILE_BASE] : [])];
+    // План проверяется первым: его ошибки не зависят от LUT.
+    const plan = request.plan ? planExportItem(project, request.plan) : null;
+    // Имена из одной подпапки не сталкиваются: карта, сетка и план, затем образы, затем посты.
+    const reserved = [
+      ...(cardFile === null ? [] : [CARD_FILE_BASE]),
+      ...(request.grid ? [GRID_FILE_BASE] : []),
+      ...(plan && plan.texts.length > 0 ? [PLAN_FILE_BASE] : []),
+      ...(plan?.image ? [TARGETS_FILE_BASE] : []),
+    ];
     const lookIds = new Set(request.lut?.looks.map(({ id }) => id));
     if (posts || request.grid) for (const slot of project.slots) if (slot.assetId !== undefined && slot.lookId) lookIds.add(slot.lookId);
     const luts = new Map<string, Lut3D>();
@@ -275,6 +329,7 @@ export class ExportService {
           ])
         : [],
       grid: request.grid ? gridExportItem(project, (assetId) => proxyFile(request.dir, assetId, 2048), luts) : null,
+      plan,
     };
   }
 
