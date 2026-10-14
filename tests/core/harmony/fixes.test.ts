@@ -13,6 +13,7 @@ import {
   SEARCH_STRIDE,
   searchSlider,
   searchWindow,
+  targetFixes,
   windowMeans,
   withFix,
   type FixTarget,
@@ -332,5 +333,37 @@ describe('«Применить» и подписи', () => {
     expect(formatFix({ slider: 'temp', from: 0, value: -12 })).toBe('Температура −12');
     expect(formatFix({ slider: 'saturation', from: 5, value: 23 })).toBe('Насыщенность +18');
     expect(formatFix({ slider: 'hslHue', from: 0, value: -40, bands: ['aqua', 'blue'] })).toBe('Тон −40 · голубой и синий');
+  });
+});
+
+describe('«Применить все» — поправки к цели', () => {
+  const fix = (value: number, replace = false): TileFix => ({
+    reason: 'L',
+    slider: 'exposure',
+    from: 0,
+    value,
+    range: [-1, 1],
+    target: 0.8,
+    reached: 0.8,
+    ratio: replace ? 2 : 0,
+    exact: !replace,
+    replace,
+  });
+  const outlier = (slotId: string, source: 'target' | 'grid', published = false) => ({ slotId, source, published });
+
+  it('только плитки с целью позиции: их ожидание не зависит от соседей', () => {
+    const fixes = { a: fix(0.3), b: fix(-0.2), c: fix(0.5) };
+    expect(targetFixes([outlier('a', 'target'), outlier('b', 'grid'), outlier('c', 'target')], fixes)).toEqual([
+      { slotId: 'a', fix: fixes.a },
+      { slotId: 'c', fix: fixes.c },
+    ]);
+  });
+
+  it('опубликованные, «заменить» и ещё не посчитанные пропускаются', () => {
+    const fixes = { a: fix(0.3), b: fix(0.4), c: fix(1, true) };
+    expect(
+      targetFixes([outlier('a', 'target'), outlier('b', 'target', true), outlier('c', 'target'), outlier('d', 'target')], fixes),
+    ).toEqual([{ slotId: 'a', fix: fixes.a }]);
+    expect(targetFixes([], fixes)).toEqual([]);
   });
 });

@@ -13,15 +13,7 @@ import { plural } from '../plural';
 import { useAppStore } from '../store';
 
 export function OutliersSection({ analysis }: { analysis: GridAnalysis }) {
-  const selection = useAppStore((state) => state.selection);
-  const fixes = useFixStore((state) => state.bySlot);
-  const selected = new Set(selection.ids);
   const { outliers } = analysis;
-  const onClick = (event: MouseEvent, outlier: TileExpectation) => {
-    const mode = event.metaKey || event.ctrlKey ? 'toggle' : event.shiftKey ? 'range' : 'replace';
-    clickTileInAnalysis(outlier.slotId, mode);
-  };
-
   if (outliers.length === 0) {
     return (
       <p className="muted" data-testid="outliers-none">
@@ -34,53 +26,70 @@ export function OutliersSection({ analysis }: { analysis: GridAnalysis }) {
       <p className="muted" data-testid="outliers-count" data-count={outliers.length}>
         {outliers.length} {plural(outliers.length, 'плитка выбивается', 'плитки выбиваются', 'плиток выбиваются')}
       </p>
-      <ul className="outliers" data-testid="outliers">
-        {outliers.map((outlier) => (
-          <li key={outlier.slotId} className="outlier-row">
-            <button
-              className={`outlier${selected.has(outlier.slotId) ? ' selected' : ''}`}
-              data-testid="outlier"
-              data-slot-id={outlier.slotId}
-              data-index={outlier.index}
-              data-deviation={outlier.deviation}
-              data-source={outlier.source}
-              data-published={outlier.published}
-              aria-pressed={selected.has(outlier.slotId)}
-              title={`Отклонение ${outlier.deviation.toFixed(1)} допуска · ожидание ${outlier.source === 'target' ? 'по цели позиции' : 'по сетке'}`}
-              onClick={(event) => onClick(event, outlier)}
-            >
-              <span className="outlier-number">{outlier.index + 1}</span>
-              <span className="outlier-reasons">
-                {outlier.reasons.map((part) => (
-                  <span
-                    key={part.reason}
-                    className="outlier-reason"
-                    data-testid="outlier-reason"
-                    data-reason={part.reason}
-                    data-value={part.value}
-                    data-expected={part.expected}
-                    data-ratio={part.ratio}
-                  >
-                    {formatPart(part)}
-                  </span>
-                ))}
-                {(outlier.source === 'target' || outlier.published) && (
-                  <span className="outlier-marks muted">
-                    {[outlier.source === 'target' ? 'по цели' : '', outlier.published ? 'опубликован' : ''].filter(Boolean).join(' · ')}
-                  </span>
-                )}
-              </span>
-            </button>
-            <FixLine outlier={outlier} entry={fixes[outlier.slotId]} />
-          </li>
-        ))}
-      </ul>
+      <OutlierList outliers={outliers} />
     </>
   );
 }
 
+/**
+ * Строки выбросов: номер, причины, пометки и строка поправки. Её же берёт раздел «Поправки к цели» вкладки «Цель»
+ * (ADR 0025), там у «заменить» своя подпись — replaceNote.
+ */
+export function OutlierList({ outliers, replaceNote }: { outliers: readonly TileExpectation[]; replaceNote?: string }) {
+  const selection = useAppStore((state) => state.selection);
+  const fixes = useFixStore((state) => state.bySlot);
+  const selected = new Set(selection.ids);
+  const onClick = (event: MouseEvent, outlier: TileExpectation) => {
+    const mode = event.metaKey || event.ctrlKey ? 'toggle' : event.shiftKey ? 'range' : 'replace';
+    clickTileInAnalysis(outlier.slotId, mode);
+  };
+  return (
+    <ul className="outliers" data-testid="outliers">
+      {outliers.map((outlier) => (
+        <li key={outlier.slotId} className="outlier-row">
+          <button
+            className={`outlier${selected.has(outlier.slotId) ? ' selected' : ''}`}
+            data-testid="outlier"
+            data-slot-id={outlier.slotId}
+            data-index={outlier.index}
+            data-deviation={outlier.deviation}
+            data-source={outlier.source}
+            data-published={outlier.published}
+            aria-pressed={selected.has(outlier.slotId)}
+            title={`Отклонение ${outlier.deviation.toFixed(1)} допуска · ожидание ${outlier.source === 'target' ? 'по цели позиции' : 'по сетке'}`}
+            onClick={(event) => onClick(event, outlier)}
+          >
+            <span className="outlier-number">{outlier.index + 1}</span>
+            <span className="outlier-reasons">
+              {outlier.reasons.map((part) => (
+                <span
+                  key={part.reason}
+                  className="outlier-reason"
+                  data-testid="outlier-reason"
+                  data-reason={part.reason}
+                  data-value={part.value}
+                  data-expected={part.expected}
+                  data-ratio={part.ratio}
+                >
+                  {formatPart(part)}
+                </span>
+              ))}
+              {(outlier.source === 'target' || outlier.published) && (
+                <span className="outlier-marks muted">
+                  {[outlier.source === 'target' ? 'по цели' : '', outlier.published ? 'опубликован' : ''].filter(Boolean).join(' · ')}
+                </span>
+              )}
+            </span>
+          </button>
+          <FixLine outlier={outlier} entry={fixes[outlier.slotId]} replaceNote={replaceNote} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Строка поправки под выбросом: поправка и «Применить», «заменить» или «опубликован, не правится». */
-function FixLine({ outlier, entry }: { outlier: TileExpectation; entry: FixEntry | undefined }) {
+function FixLine({ outlier, entry, replaceNote }: { outlier: TileExpectation; entry: FixEntry | undefined; replaceNote?: string | undefined }) {
   if (outlier.published) {
     return (
       <p className="outlier-fix muted" data-testid="outlier-fix" data-state="published">
@@ -121,7 +130,7 @@ function FixLine({ outlier, entry }: { outlier: TileExpectation; entry: FixEntry
     >
       {fix.replace ? (
         <>
-          <span className="outlier-replace">Заменить</span>
+          <span className="outlier-replace">Заменить{replaceNote ? ` — ${replaceNote}` : ''}</span>
           <span className="muted">
             {' '}
             · в пределах лимита — {reached}

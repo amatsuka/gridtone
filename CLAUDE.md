@@ -56,6 +56,11 @@ sharp, better-sqlite3, Vitest, Playwright. Пакеты — npm.
   Паттерн из изображения (ADR 0024): картинку читает задача decode-image индексатора (src/indexer/patternImage.ts),
   сетку, цели ячеек и ручную правку сетки считает только core/pattern/image.ts; картинка и сетка в проект
   не пишутся — только клетки паттерна через applyPatternToGrid.
+- Стоимость попадания фото в цель — только targetCost (core/match/cost.ts), задача о назначениях — только assign
+  (core/match/assign.ts), ADR 0025: их возьмёт подбор этапа 6. Подгонка сетки — fitGrid (core/pattern/fit.ts)
+  по свежим признакам (renderer/fit.ts): опубликованные, закреплённые, choiceLocked и пустые не двигаются.
+  «Переставить» — fitTiles (фаза, порядок и цели через fittedSlots), «Применить все» — только поправки к цели
+  (targetFixes → applyTileFixes); каждое — одна правка editProject.
 - LUT запекается только через core/lut/bake.ts — узлы из applyBaked, без шейдера (ADR 0014).
   Экспорт пишет только в новую подпапку и с флагом wx: существующие файлы не перезаписываются.
 - Посты и `Сетка.png` режутся из оригинала, сверенного по хэшу, по feedFrameTransform / gridWindowTransform;

@@ -2,6 +2,7 @@
 // Проект меняется только через editProject — так каждое действие попадает в историю (ADR 0011).
 import { original } from 'immer';
 import { applyFix, type TileFix } from '@core/harmony/fixes';
+import { fittedSlots, type GridFit } from '@core/pattern/fit';
 import type { GeneratorParams } from '@core/pattern/generator';
 import { clearTargets, targetsAgree, withPatternTargets } from '@core/pattern/pattern';
 import { copyAdjustGroups, type AdjustGroup } from '@core/project/adjustGroups';
@@ -161,6 +162,23 @@ export function clearPattern(): void {
   });
 }
 
+// ─── Подгонка (docs/decisions/0025-fit.md) ──────────────────────────────────
+
+/**
+ * «Переставить»: фаза паттерна, порядок подвижных фото и цели всех позиций — одна запись истории. Опубликованные,
+ * закреплённые, зафиксированные и пустые позиции подгонка не двигает. Если проект изменился после подгонки
+ * (другой порядок, состав или паттерн), ничего не пишется: раздел «Подгонка» покажет новую.
+ */
+export function fitTiles(fit: GridFit): void {
+  editProject((draft) => {
+    const base = original(draft) as Project;
+    const next = fittedSlots(base, fit);
+    if (!next) return;
+    if (!sameJson(base.pattern, fit.pattern)) draft.pattern = cloneJson(fit.pattern);
+    assignSlots(draft.slots, base.slots, next);
+  });
+}
+
 // ─── Паттерн из изображения (docs/decisions/0024-pattern-image.md) ────────────
 
 let patternImportSeq = 0;
@@ -225,6 +243,21 @@ export function applyTileFix(slotId: string, fix: TileFix): void {
   editProject((draft) => {
     const slot = draft.slots.find((s) => s.id === slotId);
     if (slot && editable(slot)) applyFix(slot.adjust, fix);
+  });
+}
+
+/**
+ * «Применить все» поправки к цели (ADR 0025): каждая поправка — в поправку фото своей плитки, все вместе — одна
+ * запись истории, одна ⌘Z снимает все. Опубликованные, пустые и «заменить» не правятся.
+ */
+export function applyTileFixes(fixes: readonly { slotId: string; fix: TileFix }[]): void {
+  const bySlot = new Map(fixes.filter(({ fix }) => !fix.replace).map(({ slotId, fix }) => [slotId, fix]));
+  if (bySlot.size === 0) return;
+  editProject((draft) => {
+    for (const slot of draft.slots) {
+      const fix = bySlot.get(slot.id);
+      if (fix && editable(slot)) applyFix(slot.adjust, fix);
+    }
   });
 }
 

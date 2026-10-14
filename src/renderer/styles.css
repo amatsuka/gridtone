@@ -1636,6 +1636,39 @@ button:disabled {
   margin: 0 0 8px;
 }
 
+/* Подгонка (ADR 0025): карта стоимости — как карта яркости, клетка — стоимость и куда переедет фото. */
+.fit > p {
+  margin: 0 0 8px;
+}
+
+.fit .analysis-stats {
+  margin-bottom: 8px;
+}
+
+.cost-cell {
+  flex-direction: column;
+  gap: 1px;
+  color: var(--text);
+}
+
+.cost-cell.moves {
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+
+.cost-cell.locked {
+  outline: 1px solid var(--muted);
+  outline-offset: -3px;
+}
+
+.cost-move {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.fit-note {
+  align-self: center;
+}
+
 /* ─── Импорт паттерна (ADR 0024): картинка-шаблон и сетка поверх, как в редакторе фото ─── */
 
 .pattern-import {

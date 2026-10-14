@@ -16,7 +16,7 @@ import { metricsWindowSize } from '../metrics/tile';
 import { createAdjust } from '../project/defaults';
 import type { Adjust, HueBand, Ratio } from '../project/types';
 import { EXPOSURE_MAX, SLIDER_MAX } from '../project/validate';
-import type { ExpectationSource } from './outliers';
+import type { ExpectationSource, TileExpectation } from './outliers';
 
 /** Ползунок поправки фото: экспозиция, температура, насыщенность, тон HSL. */
 export type FixSlider = 'exposure' | 'temp' | 'saturation' | 'hslHue';
@@ -223,6 +223,22 @@ export function applyFix(adjust: Adjust, fix: Pick<TileFix, 'slider' | 'value' |
     case 'hslHue':
       for (const band of fix.bands ?? []) adjust.hsl[band] = { ...adjust.hsl[band], hue: fix.value };
   }
+}
+
+/**
+ * «Применить все» (docs/decisions/0025-fit.md): готовые поправки выбросов с целью позиции, в порядке выбросов.
+ * Ожидание цели не зависит от соседей, поэтому поправки не мешают друг другу — довод ADR 0021 против
+ * «Применить все» здесь не работает. Опубликованные, «заменить» и ещё не посчитанные пропускаются.
+ */
+export function targetFixes(
+  outliers: readonly Pick<TileExpectation, 'slotId' | 'source' | 'published'>[],
+  fixes: Readonly<Record<string, TileFix | undefined>>,
+): { slotId: string; fix: TileFix }[] {
+  return outliers.flatMap((outlier) => {
+    const fix = fixes[outlier.slotId];
+    if (outlier.source !== 'target' || outlier.published || !fix || fix.replace) return [];
+    return [{ slotId: outlier.slotId, fix }];
+  });
 }
 
 /** Шаги 1–6 поправки фото: так тон плитки входит в HSL (шаг 7). */
