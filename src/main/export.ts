@@ -281,6 +281,8 @@ export function exportFileCount({ cardFile, luts, posts, grid, plan }: Omit<Expo
 export class ExportService {
   private readonly luts: LutSource;
   private readonly now: () => Date;
+  /** Подпапки, созданные экспортом в этом запуске: только их renderer может показать в Finder. */
+  private readonly folders = new Set<string>();
 
   constructor(
     private readonly port: ExportPort,
@@ -337,6 +339,7 @@ export class ExportService {
   async start(root: string, project: Project, request: ExportRequest): Promise<ExportStarted> {
     const { notes, ...plan } = await this.plan(project, request);
     const dir = await createExportFolder(root, exportFolderName(project.name, this.now()));
+    this.folders.add(dir);
     const jobId = randomUUID();
     const progress: ExportProgress = {
       jobId,
@@ -369,6 +372,11 @@ export class ExportService {
       report();
     });
     return { jobId, dir };
+  }
+
+  /** Папку создал экспорт в этом запуске: путь из renderer — ровно тот, что вернул start. */
+  isExportFolder(dir: string): boolean {
+    return this.folders.has(dir);
   }
 
   /**

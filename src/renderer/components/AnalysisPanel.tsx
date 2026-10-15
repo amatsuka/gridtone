@@ -1,8 +1,10 @@
 // Вкладка «Анализ» инспектора (spec, модуль 3; docs/decisions/0018-features-grid-metrics.md, 0019-harmony.md,
-// 0020-outliers.md): карта яркости, ритм, разброс, контраст соседей, колесо тонов с гармонией, палитра сетки
-// и выбросы. Признаки плиток считает воркер метрик, анализ сетки по ним — analyzeGrid из core в renderer
-// (`useGridAnalysis`): на 90 плитках это миллисекунды. В проект ничего не пишется.
+// 0020-outliers.md): карта яркости с отметками выбросов, ритм, разброс, контраст соседей, колесо тонов с гармонией,
+// палитра сетки и выбросы. Признаки плиток считает воркер метрик, анализ сетки по ним — analyzeGrid из core
+// в renderer (`useGridAnalysis`): на 90 плитках это миллисекунды. Плитки, чьих признаков не будет, названы
+// (unavailable.ts). В проект ничего не пишется.
 import type { CSSProperties, MouseEvent } from 'react';
+import { REASON_LABELS, type TileExpectation } from '@core/harmony/outliers';
 import type { GridAnalysis, GridMetrics, LumaCell } from '@core/metrics/grid';
 import type { PaletteEntry } from '@core/metrics/palette';
 import { FLAT_SPREAD, MIN_GRID_TILES, RHYTHM_LABELS, type Rhythm, type TemplateFit } from '@core/metrics/rhythm';
@@ -12,6 +14,7 @@ import { useGridAnalysis } from '../analysis';
 import { clickTileInAnalysis } from '../commands';
 import { useMetricsStore } from '../metrics';
 import { useAppStore } from '../store';
+import { noDataText, unavailableSlots } from '../unavailable';
 import { HarmonySection } from './HarmonySection';
 import { OutliersSection } from './OutliersSection';
 
@@ -20,17 +23,27 @@ const fixed = (value: number, digits = 2) => value.toFixed(digits);
 
 export function AnalysisPanel({ project }: { project: Project }) {
   const bySlot = useMetricsStore((state) => state.bySlot);
-  const { done, total } = useMetricsStore((state) => state.progress);
+  const { done, failed: failedCount, total } = useMetricsStore((state) => state.progress);
+  const failed = useMetricsStore((state) => state.failed);
+  const assets = useAppStore((state) => state.snapshot?.assets);
   const analysis = useGridAnalysis(project);
+  // Плитки ленты с фото, но без признаков: из них те, чьих признаков не будет, — «нет данных», остальные считаются.
+  const withoutFeatures = analysis.cells.filter((cell) => cell.photo && !cell.pinned && cell.L === null);
+  const unavailable = unavailableSlots(project, assets, failed, withoutFeatures.map((cell) => cell.slotId));
 
   return (
     <div className="analysis" data-testid="analysis-panel" data-photos={analysis.photos} data-measured={analysis.measured}>
       <header className="inspector-header">
         <h2>Анализ сетки</h2>
       </header>
-      {done < total && (
+      {done + failedCount < total && (
         <p className="muted" data-testid="analysis-progress" data-done={done} data-total={total}>
           Посчитано {done} из {total}
+        </p>
+      )}
+      {unavailable.length > 0 && (
+        <p className="muted" data-testid="analysis-no-data" data-count={unavailable.length}>
+          {noDataText(unavailable)} Анализ — по остальным плиткам.
         </p>
       )}
       {project.slots.length === 0 ? (
@@ -38,12 +51,13 @@ export function AnalysisPanel({ project }: { project: Project }) {
       ) : (
         <>
           <h3>Яркость</h3>
-          <LumaMap analysis={analysis} ratio={project.grid.ratio} />
+          <LumaMap analysis={analysis} ratio={project.grid.ratio} noData={new Set(unavailable.map((u) => u.slotId))} />
           {analysis.metrics ? (
             <LumaStats metrics={analysis.metrics} />
-          ) : analysis.photos < MIN_GRID_TILES ? (
+          ) : analysis.photos - unavailable.length < MIN_GRID_TILES ? (
             <p className="muted" data-testid="analysis-too-few">
-              Нужно хотя бы {MIN_GRID_TILES} плиток с фото: на одном ряду ритм и разброс ничего не значат.
+              Нужно хотя бы {MIN_GRID_TILES} плиток с фото{unavailable.length > 0 ? ' и данными' : ''}: на одном ряду ритм
+              и разброс ничего не значат.
             </p>
           ) : (
             <p className="muted">Считаем признаки плиток…</p>
@@ -70,11 +84,21 @@ export function AnalysisPanel({ project }: { project: Project }) {
 
 /**
  * Мини-карта 3 × N: клетка залита серым своей L. Клик выделяет плитку, ⌘ и Shift — как в сетке. Закреплённые
- * видны с пометкой, но в анализ не входят (ADR 0022).
+ * видны с пометкой, но в анализ не входят (ADR 0022). Выбросы (ADR 0020) отмечены точкой в углу, причины — в подсказке.
+ * У плиток без данных вместо L — прочерк, у тех, что ещё считаются, — многоточие.
  */
-function LumaMap({ analysis, ratio }: { analysis: GridAnalysis; ratio: Project['grid']['ratio'] }) {
+function LumaMap({
+  analysis,
+  ratio,
+  noData,
+}: {
+  analysis: GridAnalysis;
+  ratio: Project['grid']['ratio'];
+  noData: ReadonlySet<string>;
+}) {
   const selection = useAppStore((state) => state.selection);
   const selected = new Set(selection.ids);
+  const outliers = new Map<string, TileExpectation>(analysis.outliers.map((o) => [o.slotId, o]));
   const onClick = (event: MouseEvent, cell: LumaCell) => {
     const mode = event.metaKey || event.ctrlKey ? 'toggle' : event.shiftKey ? 'range' : 'replace';
     clickTileInAnalysis(cell.slotId, mode);
@@ -90,6 +114,7 @@ function LumaMap({ analysis, ratio }: { analysis: GridAnalysis; ratio: Project['
       {analysis.cells.map((cell) => {
         if (!cell.photo) return <div key={cell.slotId} className="luma-cell empty" data-testid="luma-cell" data-index={cell.index} />;
         const L = cell.L;
+        const outlier = outliers.get(cell.slotId);
         // Подпись тёмная на светлой клетке и светлая на тёмной.
         const style = L === null ? undefined : { backgroundColor: cssRgb(labToSrgb8([L, 0, 0])), color: L > 0.62 ? '#111' : '#eee' };
         const classes = [
@@ -97,8 +122,13 @@ function LumaMap({ analysis, ratio }: { analysis: GridAnalysis; ratio: Project['
           selected.has(cell.slotId) ? 'selected' : '',
           cell.published ? 'published' : '',
           cell.pinned ? 'pinned' : '',
+          outlier ? 'outlier' : '',
         ].filter(Boolean);
-        const marks = `${cell.published ? ', опубликован' : ''}${cell.pinned ? ', закреплён — вне анализа' : ''}`;
+        const reasons = outlier?.reasons.map((part) => REASON_LABELS[part.reason]).join(', ');
+        const missing = noData.has(cell.slotId);
+        const marks = `${cell.published ? ', опубликован' : ''}${cell.pinned ? ', закреплён — вне анализа' : ''}${
+          reasons ? `, выбивается: ${reasons}` : ''
+        }${missing ? ', нет данных' : ''}`;
         return (
           <button
             key={cell.slotId}
@@ -109,11 +139,13 @@ function LumaMap({ analysis, ratio }: { analysis: GridAnalysis; ratio: Project['
             data-slot-id={cell.slotId}
             data-l={L ?? undefined}
             data-pinned={cell.pinned || undefined}
+            data-outlier={outlier ? true : undefined}
+            data-no-data={missing || undefined}
             aria-pressed={selected.has(cell.slotId)}
             title={`Пост ${cell.index + 1}${marks}${L === null ? '' : ` · L ${fixed(L, 3)}`}`}
             onClick={(event) => onClick(event, cell)}
           >
-            {L === null ? '…' : fixed(L)}
+            {L === null ? (missing ? '—' : '…') : fixed(L)}
           </button>
         );
       })}

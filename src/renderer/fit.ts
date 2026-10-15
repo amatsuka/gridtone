@@ -1,13 +1,13 @@
 // «Подогнать текущую сетку» для вкладки «Цель» (docs/decisions/0025-fit.md): fitGrid из core по свежим признакам
 // плиток. Признак свежий, если посчитан для нынешних правок: ключ метрик слота совпадает с нынешним запросом
 // (как у поправок, fixes.ts). Перестановка по устаревшим признакам переставила бы не то, поэтому, пока у какой-то
-// из участвующих плиток признаки не свежие, подгонки нет — «Считаем…». Подгонка — производные данные: в проект
+// из участвующих плиток признаки не свежие, подгонки нет — «Считаем…», а если их не будет — «Нет данных»
+// (unavailable.ts). Подгонка — производные данные: в проект
 // пишет только «Переставить» (fitTiles в commands.ts). На 90 плитках — миллисекунды, воркер не нужен.
 import { useMemo } from 'react';
 import type { TileMetrics } from '@core/metrics/tile';
 import { fitGrid, type FitResult } from '@core/pattern/fit';
-import type { Project } from '@core/project/types';
-import type { AssetStatus, ProjectSnapshot } from '@shared/ipc';
+import type { ProjectSnapshot } from '@shared/ipc';
 import { useLutStore, type LutEntry } from './luts';
 import { slotRequests, useMetricsStore } from './metrics';
 import { useAppStore } from './store';
@@ -25,22 +25,6 @@ export function freshFeatures(
     if (metrics && keys[slotId] === request.key) fresh[slotId] = metrics;
   }
   return fresh;
-}
-
-/**
- * Участвующие плитки без признаков, которых не будет: превью не построено (оригинал пропал или изменился, ADR 0004).
- * Признаки остальных ещё считаются; этих — нет, пока оригинал не вернётся и проект не откроют заново.
- */
-export function unavailableSlots(
-  project: Pick<Project, 'slots'>,
-  assets: Readonly<Record<string, AssetStatus>> | undefined,
-  missing: readonly string[],
-): string[] {
-  const byId = new Map(project.slots.map((slot) => [slot.id, slot]));
-  return missing.filter((id) => {
-    const assetId = byId.get(id)?.assetId;
-    return assetId !== undefined && assets?.[assetId]?.proxy === 'failed';
-  });
 }
 
 /** Подгонка нынешнего проекта; null — проекта нет. Пока удерживается `\`, признаки — исходников: подгонки нет. */

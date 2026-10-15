@@ -58,7 +58,8 @@ export interface PatchBatch {
 /**
  * Команда из меню приложения (docs/decisions/0011-undo-history.md). Те же сочетания renderer ловит сам;
  * меню срабатывает, только если страница сочетание не обработала, или по клику мышью.
- * `view:<режим>` — пункты меню «Вид» (docs/decisions/0012-view-modes.md): клавиши 1–7 у них только подписи.
+ * `view:<режим>` — пункты меню «Вид» (docs/decisions/0012-view-modes.md): клавиши 1–7 у них только подписи,
+ * как и E у `editor` — «Редактор фото».
  */
 export type MenuCommand =
   | 'undo'
@@ -68,7 +69,23 @@ export type MenuCommand =
   | 'pasteAdjust'
   | 'export'
   | 'importLut'
+  | 'editor'
   | `view:${ViewMode}`;
+
+/**
+ * Состояние интерфейса, от которого зависят пункты меню: им владеет renderer и шлёт его в main при каждом
+ * изменении (docs/decisions/0011-undo-history.md). Пункты проекта при закрытом проекте неактивны и так.
+ */
+export interface MenuState {
+  /** «Отменить»: в истории есть правка, а в текстовом поле — всегда: там она отменяет ввод. */
+  undo: boolean;
+  /** «Повторить» — так же. */
+  redo: boolean;
+  /** Режим просмотра: отмечен в меню «Вид». */
+  viewMode: ViewMode;
+  /** «Редактор фото»: выбрана плитка с фото, редактор ещё не открыт. */
+  editor: boolean;
+}
 
 /** Импорт `.cube` (ADR 0015): новый образ в конце looks или ошибка разбора — тогда проект не меняется. */
 export type LutImportResult = { ok: true; lookId: string } | { ok: false; error: string };
@@ -184,6 +201,8 @@ export interface InvokeMap {
   'assets:import': { args: [paths?: string[]]; result: { jobId: string } | null };
   /** Спросить папку и начать экспорт в новую подпапку; ход — событием export:progress. null — отменено. */
   'export:run': { args: [request: ExportRequest]; result: ExportStarted | null };
+  /** «Показать в Finder»: подпапка экспорта в файловом менеджере. Только папка, созданная экспортом в этом запуске. */
+  'export:reveal': { args: [dir: string]; result: void };
   /** Спросить возвращённую калибровочную карту и сверить её с образом. null — отменено или проект уже другой. */
   'calibration:check': { args: [request: CalibrationCheckRequest]; result: CalibrationCheckResult | null };
   /** Спросить картинку-шаблон паттерна и прочитать её. null — нет проекта или отменено. Проект не меняется. */
@@ -192,6 +211,8 @@ export interface InvokeMap {
   'lut:import': { args: []; result: LutImportResult | null };
   /** Разобранный LUT по id из реестра открытого проекта. */
   'lut:data': { args: [id: string]; result: LutDataResult };
+  /** Состояние пунктов меню: renderer шлёт его при каждом изменении. */
+  'menu:state': { args: [state: MenuState]; result: void };
 }
 
 export interface EventMap {
@@ -217,10 +238,12 @@ const invokeChannels = {
   'project:patch': true,
   'assets:import': true,
   'export:run': true,
+  'export:reveal': true,
   'calibration:check': true,
   'pattern:image': true,
   'lut:import': true,
   'lut:data': true,
+  'menu:state': true,
 } satisfies Record<InvokeChannel, true>;
 
 const eventChannels = {

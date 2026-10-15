@@ -443,6 +443,15 @@ function PlanSection({
   );
 }
 
+/** «Показать в Finder»: подпапку выделяет в её родительской папке main. Отказ main — только в консоль. */
+async function reveal(dir: string): Promise<void> {
+  try {
+    await api.invoke('export:reveal', dir);
+  } catch (err) {
+    console.error('Папка экспорта не показана', err);
+  }
+}
+
 function Result({ dir, progress }: { dir: string; progress: ExportProgress | null }) {
   return (
     <div className="export-result" data-testid="export-result" data-dir={dir} data-finished={progress?.finished ? 'true' : 'false'}>
@@ -454,9 +463,15 @@ function Result({ dir, progress }: { dir: string; progress: ExportProgress | nul
           : `Запись… ${progress?.done ?? 0} из ${progress?.total ?? '…'}`}
       </p>
       {progress && !progress.finished && <progress className="export-progress" value={progress.done} max={progress.total} />}
-      <p className="export-path" title={dir}>
-        {dir}
-      </p>
+      <div className="export-path-row">
+        <p className="export-path" title={dir}>
+          {dir}
+        </p>
+        {/* Подпапка создана до первого файла: её можно открыть и во время записи. */}
+        <button type="button" data-testid="export-reveal" onClick={() => void reveal(dir)}>
+          Показать в Finder
+        </button>
+      </div>
       {progress && progress.files.length > 0 && (
         <ul className="export-files">
           {progress.files.map((file) => (

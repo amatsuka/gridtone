@@ -11,10 +11,11 @@ import type { Project } from '@core/project/types';
 import { useGridAnalysis } from '../analysis';
 import { applyTileFixes, clickTileInAnalysis, fitTiles } from '../commands';
 import { useFixStore } from '../fixes';
-import { unavailableSlots, useGridFit } from '../fit';
+import { useGridFit } from '../fit';
 import { useMetricsStore } from '../metrics';
 import { plural } from '../plural';
 import { useAppStore } from '../store';
+import { noDataText, unavailableSlots } from '../unavailable';
 import { OutlierList } from './OutliersSection';
 
 const ROLE_LABELS: Record<FitRole, string> = {
@@ -31,6 +32,7 @@ const formatCost = (cost: number) => cost.toFixed(1);
 export function FitSection({ project }: { project: Project }) {
   const result = useGridFit();
   const { done, total } = useMetricsStore((state) => state.progress);
+  const failed = useMetricsStore((state) => state.failed);
   const assets = useAppStore((state) => state.snapshot?.assets);
   if (!project.pattern || !result || result.kind === 'none') {
     return (
@@ -40,17 +42,16 @@ export function FitSection({ project }: { project: Project }) {
     );
   }
   if (result.kind === 'pending') {
-    // Превью не построено (оригинал пропал): признаков этих плиток не будет, «Считаем…» висело бы вечно.
-    const unavailable = unavailableSlots(project, assets, result.missing);
+    // Превью не построено или воркер его не прочитал: признаков этих плиток не будет, «Считаем…» висело бы вечно.
+    const unavailable = unavailableSlots(project, assets, failed, result.missing);
     if (unavailable.length > 0) {
-      const positions = unavailable.map((id) => project.slots.findIndex((slot) => slot.id === id) + 1);
-      const n = unavailable.length;
+      const lost = unavailable.filter((s) => s.reason === 'proxy').length;
       return (
-        <p className="muted" data-testid="fit" data-state="unavailable" data-missing={n}>
-          Нет данных для {n} {plural(n, 'плитки', 'плиток', 'плиток')} (
-          {plural(n, 'позиция', 'позиции', 'позиции')} {positions.join(', ')}): превью не построено — оригинал пропал или
-          изменился. Подгонке нужны признаки всех фото ленты: верните {plural(n, 'оригинал', 'оригиналы', 'оригиналы')} на
-          место и откройте проект заново.
+        <p className="muted" data-testid="fit" data-state="unavailable" data-missing={unavailable.length}>
+          {noDataText(unavailable)} Подгонке нужны признаки всех фото ленты
+          {lost > 0
+            ? `: верните ${plural(lost, 'оригинал', 'оригиналы', 'оригиналы')} на место и откройте проект заново.`
+            : '.'}
         </p>
       );
     }
@@ -164,17 +165,38 @@ function CostMap({ positions, ratio }: { positions: readonly FitPosition[]; rati
 /**
  * «Поправки к цели»: выбросы с целью позиции и их поправки. «Применить все» — поправки всех таких плиток одной
  * записью истории: ожидание цели не зависит от соседей. Пока какая-то поправка считается, кнопка недоступна.
+ * Плитки с целью без данных (unavailable.ts) названы над списком: их попадание в цель не проверить.
  */
 export function TargetFixesSection({ project }: { project: Project }) {
   const analysis = useGridAnalysis(project);
   const entries = useFixStore((state) => state.bySlot);
+  const failed = useMetricsStore((state) => state.failed);
+  const assets = useAppStore((state) => state.snapshot?.assets);
   const outliers = analysis.outliers.filter((o) => o.source === 'target');
+  // Плитки с целью без признаков: их попадание в цель не проверить — говорим об этом, а не молчим.
+  const withoutFeatures = analysis.cells.filter((c) => c.photo && !c.pinned && c.L === null && project.slots[c.index]?.target);
+  const unavailable = unavailableSlots(project, assets, failed, withoutFeatures.map((c) => c.slotId));
+  const note = unavailable.length > 0 && (
+    <p className="muted" data-testid="target-fixes-no-data" data-count={unavailable.length}>
+      {noDataText(unavailable)} Попадание в цель у {unavailable.length === 1 ? 'неё' : 'них'} не проверено.
+    </p>
+  );
   if (outliers.length === 0) {
     const targeted = analysis.expectations.some((e) => e.source === 'target');
+    const text = targeted
+      ? unavailable.length > 0
+        ? 'Остальные плитки с целью в допуске.'
+        : 'Все плитки с целью в допуске.'
+      : unavailable.length > 0
+        ? 'Других плиток с целью нет.'
+        : 'Плиток с целью пока нет.';
     return (
-      <p className="muted" data-testid="target-fixes" data-state="none">
-        {targeted ? 'Все плитки с целью в допуске.' : 'Плиток с целью пока нет.'}
-      </p>
+      <>
+        {note}
+        <p className="muted" data-testid="target-fixes" data-state="none">
+          {text}
+        </p>
+      </>
     );
   }
   const ready: Record<string, TileFix> = {};
@@ -185,19 +207,22 @@ export function TargetFixesSection({ project }: { project: Project }) {
   const fixes = targetFixes(outliers, ready);
   const pending = outliers.some((o) => !o.published && entries[o.slotId]?.state !== 'ready' && entries[o.slotId]?.state !== 'error');
   return (
-    <div className="target-fixes" data-testid="target-fixes" data-state="list" data-count={outliers.length}>
-      <OutlierList outliers={outliers} replaceNote="в подбор из библиотеки (этап 6)" />
-      <div className="button-row">
-        <button
-          data-testid="apply-all-fixes"
-          data-count={fixes.length}
-          disabled={pending || fixes.length === 0}
-          title="Поправки всех плиток с целью — одной записью истории"
-          onClick={() => applyTileFixes(fixes)}
-        >
-          Применить все{fixes.length > 0 ? ` (${fixes.length})` : ''}
-        </button>
+    <>
+      {note}
+      <div className="target-fixes" data-testid="target-fixes" data-state="list" data-count={outliers.length}>
+        <OutlierList outliers={outliers} replaceNote="в подбор из библиотеки (этап 6)" />
+        <div className="button-row">
+          <button
+            data-testid="apply-all-fixes"
+            data-count={fixes.length}
+            disabled={pending || fixes.length === 0}
+            title="Поправки всех плиток с целью — одной записью истории"
+            onClick={() => applyTileFixes(fixes)}
+          >
+            Применить все{fixes.length > 0 ? ` (${fixes.length})` : ''}
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

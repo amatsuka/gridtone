@@ -62,6 +62,9 @@ interface AppState {
   patternImport: PatternImport | null;
   /** Почему картинка-шаблон не открылась: показывается во вкладке «Цель». */
   patternImageError: string | null;
+  /** В истории есть что отменить и что повторить: по ним активны пункты меню (ADR 0011). */
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 export interface PatternImport {
@@ -92,6 +95,8 @@ export const useAppStore = create<AppState>()(() => ({
   patternDraft: DEFAULT_PATTERN_DRAFT,
   patternImport: null,
   patternImageError: null,
+  canUndo: false,
+  canRedo: false,
 }));
 
 // Поток правок — docs/decisions/0008-edit-flow.md, история — docs/decisions/0011-undo-history.md.
@@ -141,6 +146,8 @@ function commit(snapshot: ProjectSnapshot, project: Project, patches: Patch[]): 
   useAppStore.setState({
     snapshot: { ...snapshot, project },
     selection: project.slots === snapshot.project.slots ? selection : pruneSelection(selection, project.slots.map((slot) => slot.id)),
+    canUndo: history.canUndo,
+    canRedo: history.canRedo,
   });
   api.invoke('project:patch', { dir: snapshot.dir, seq, patches: patches as ProjectPatch[] }).catch((err: unknown) => {
     console.error('main отверг правку', err);
@@ -189,6 +196,9 @@ function receiveSnapshot(incoming: ProjectSnapshot | null): void {
     lutImportError: sameProject ? current.lutImportError : null,
     patternImport: sameProject ? current.patternImport : null,
     patternImageError: sameProject ? current.patternImageError : null,
+    // История могла очиститься: другой проект или main отверг пакет (resync).
+    canUndo: history.canUndo,
+    canRedo: history.canRedo,
   });
 }
 

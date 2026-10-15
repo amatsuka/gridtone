@@ -187,6 +187,23 @@ describe('ExportService', () => {
     expect(second.dir).toBe(join(root, 'Сетка — экспорт 2026-10-08 07-05-03 (2)'));
     expect((await readdir(root)).sort()).toEqual(['Сетка — экспорт 2026-10-08 07-05-03', 'Сетка — экспорт 2026-10-08 07-05-03 (2)']);
   });
+
+  test('«Показать в Finder» — только подпапки, созданные экспортом в этом запуске', async () => {
+    const service = new ExportService(new FakePort(), () => {});
+    const request = { dir: '/p', card: true };
+    expect(service.isExportFolder(root)).toBe(false);
+    const started = await service.start(root, project(), request);
+    expect(service.isExportFolder(started.dir)).toBe(true);
+    // Соседняя папка с тем же именем, родительская, путь с лишним слешем — не папки экспорта.
+    expect(service.isExportFolder(`${started.dir} (2)`)).toBe(false);
+    expect(service.isExportFolder(root)).toBe(false);
+    expect(service.isExportFolder(`${started.dir}/`)).toBe(false);
+    // Экспорт, который не начался, папку не создаёт и не запоминает.
+    await expect(service.start(root, project(), { dir: '/p' })).rejects.toThrow(/Нечего/);
+    expect(service.isExportFolder(join(root, 'нет такой'))).toBe(false);
+    // Другой экземпляр (новый запуск приложения) о прежних папках не знает.
+    expect(new ExportService(new FakePort(), () => {}).isExportFolder(started.dir)).toBe(false);
+  });
 });
 
 describe('калибровочная карта (ADR 0016)', () => {

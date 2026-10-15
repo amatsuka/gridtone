@@ -1,7 +1,7 @@
 // Метрики плиток для режимов 5 «Доминанты» и 7 «Отклонение» (docs/decisions/0012-view-modes.md) и вкладки
 // «Анализ» (docs/decisions/0018-features-grid-metrics.md): признаки плитки целиком, тон среднего и доминанта.
 // Считает их воркер; здесь — кэш по ассету, кадру, параметрам конвейера и id LUT образа (ADR 0015),
-// пересчёт через 150 мс после правки и ход «посчитано N из M».
+// пересчёт через 150 мс после правки, ход «посчитано N из M» и плитки, которые воркер посчитать не смог.
 // Метрики — производные данные: в проект и в историю они не попадают.
 import { create } from 'zustand';
 import type { PipelineParams } from '@core/color/bake';
@@ -25,11 +25,21 @@ interface MetricsState {
   bySlot: Readonly<Record<string, TileMetrics>>;
   /** Ключ запроса, по которому посчитаны метрики слота: совпал с нынешним — метрики свежие (поправки, ADR 0021). */
   keys: Readonly<Record<string, string>>;
-  /** Плиток, чьи метрики нужны сейчас (с готовым прокси), и сколько из них уже посчитано для текущих правок. */
-  progress: { done: number; total: number };
+  /**
+   * Слоты, чьи метрики для нынешних правок воркер посчитать не смог (превью не читается), и ключ этого запроса.
+   * Прежних метрик у них нет: «Анализ», «Подгонка» и «Поправки к цели» говорят «нет данных», а не ждут.
+   */
+  failed: Readonly<Record<string, string>>;
+  /** Плиток, чьи метрики нужны сейчас (с готовым прокси), сколько из них посчитано для текущих правок и сколько — нет. */
+  progress: { done: number; failed: number; total: number };
 }
 
-export const useMetricsStore = create<MetricsState>()(() => ({ bySlot: {}, keys: {}, progress: { done: 0, total: 0 } }));
+export const useMetricsStore = create<MetricsState>()(() => ({
+  bySlot: {},
+  keys: {},
+  failed: {},
+  progress: { done: 0, failed: 0, total: 0 },
+}));
 
 /** Вкладки, которым нужен анализ сетки и поправки: «Анализ» и «Цель» (ADR 0023). */
 export function analysisTab(tab: InspectorTab): boolean {
@@ -96,6 +106,8 @@ export function connectMetrics(): () => void {
   let frame = 0;
   const cache = new Map<string, TileMetrics>();
   const pending = new Set<string>();
+  /** Ключи, которые воркер посчитать не смог: повторно в этом проекте не просятся — ответ был бы тем же. */
+  const failed = new Set<string>();
   /** Ключ, нужный каждому слоту сейчас. */
   let wanted = new Map<string, string>();
 
@@ -104,6 +116,7 @@ export function connectMetrics(): () => void {
     const previous = useMetricsStore.getState();
     const bySlot: Record<string, TileMetrics> = {};
     const keys: Record<string, string> = {};
+    const failedSlots: Record<string, string> = {};
     let done = 0;
     for (const [slotId, key] of wanted) {
       const fresh = cache.get(key);
@@ -111,12 +124,16 @@ export function connectMetrics(): () => void {
         done++;
         bySlot[slotId] = fresh;
         keys[slotId] = key;
+      } else if (failed.has(key)) {
+        // Прежние метрики — от других правок: выдавать их за нынешние нельзя.
+        failedSlots[slotId] = key;
       } else if (previous.bySlot[slotId]) {
         bySlot[slotId] = previous.bySlot[slotId];
         keys[slotId] = previous.keys[slotId] ?? '';
       }
     }
-    useMetricsStore.setState({ bySlot, keys, progress: { done, total: wanted.size } });
+    const failedCount = Object.keys(failedSlots).length;
+    useMetricsStore.setState({ bySlot, keys, failed: failedSlots, progress: { done, failed: failedCount, total: wanted.size } });
   };
   // Ответы воркера приходят по одному: в стор они уходят не чаще раза в кадр.
   const publishSoon = () => {
@@ -128,6 +145,8 @@ export function connectMetrics(): () => void {
     pending.delete(response.key);
     if (!response.ok) {
       console.error('Метрики плитки не посчитаны', response.error);
+      failed.add(response.key);
+      publishSoon();
       return;
     }
     if (response.type !== 'tile') return;
@@ -163,7 +182,7 @@ export function connectMetrics(): () => void {
         cache.set(key, cached);
         continue;
       }
-      if (pending.has(key)) continue;
+      if (pending.has(key) || failed.has(key)) continue;
       pending.add(key);
       worker ??= createWorker();
       if (lut && !sentLuts.has(lut.id)) {
@@ -177,6 +196,8 @@ export function connectMetrics(): () => void {
   };
 
   const unsubscribe = useAppStore.subscribe((state, prev) => {
+    // Другой проект или тот же, открытый заново: превью могли пересобрать — прежние неудачи не в счёт.
+    if (state.snapshot?.dir !== prev.snapshot?.dir) failed.clear();
     if (!needsMetrics(state)) return;
     if (state.viewMode !== prev.viewMode || state.inspectorTab !== prev.inspectorTab || state.showOriginal !== prev.showOriginal) {
       // Вход в режим, на вкладку «Анализ» и до/после — сразу: обычно всё уже в кэше.

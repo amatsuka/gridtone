@@ -1,20 +1,11 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron';
-import type { MenuCommand } from '@shared/ipc';
+import type { MenuCommand, MenuState } from '@shared/ipc';
 import { VIEW_MODE_LABELS, VIEW_MODES } from '@shared/view';
 import type { Actions } from './actions';
+import { INITIAL_MENU_STATE, menuItemStates } from './menu-state';
 
-const PROJECT_ITEM_IDS = [
-  'import',
-  'importLut',
-  'export',
-  'save',
-  'close',
-  'undo',
-  'redo',
-  'copyAdjust',
-  'pasteAdjust',
-  ...VIEW_MODES.map((mode) => `view:${mode}`),
-];
+let hasProject = false;
+let menuState: MenuState = INITIAL_MENU_STATE;
 
 /**
  * sendCommand передаёт команду в renderer: undo/redo и правки ведёт он (docs/decisions/0011-undo-history.md).
@@ -66,14 +57,24 @@ export function buildMenu(actions: Actions, sendCommand: (command: MenuCommand) 
     {
       label: 'Вид',
       submenu: [
-        // Клавиши 1–7 ловит renderer, вне полей ввода. Зарегистрированные в меню, они перехватили бы
-        // цифры и в поле имени образа, поэтому здесь они только подписаны.
+        // Клавиши 1–7 и E ловит renderer, вне полей ввода. Зарегистрированные в меню, они перехватили бы
+        // цифры и буквы и в поле имени образа, поэтому здесь они только подписаны.
+        // Отмеченный режим — тот, о котором сообщил renderer. Electron отмечает пункт radio сам ещё до click;
+        // если renderer команду не выполнит (открыт диалог), отметка вернётся к его режиму.
         ...VIEW_MODES.map(
           (mode, i): MenuItemConstructorOptions => ({
             ...command(`view:${mode}`, VIEW_MODE_LABELS[mode], String(i + 1)),
+            type: 'radio',
+            checked: mode === menuState.viewMode,
             registerAccelerator: false,
+            click: () => {
+              sendCommand(`view:${mode}`);
+              applyMenuState();
+            },
           }),
         ),
+        { type: 'separator' },
+        { ...command('editor', 'Редактор фото', 'E'), registerAccelerator: false },
         { type: 'separator' },
         { role: 'reload', label: 'Перезагрузить' },
         { role: 'forceReload', label: 'Перезагрузить без кэша' },
@@ -89,12 +90,28 @@ export function buildMenu(actions: Actions, sendCommand: (command: MenuCommand) 
     { role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  applyMenuState();
 }
 
+/** Открыт ли проект: без него пункты проекта неактивны. */
 export function setProjectMenuEnabled(enabled: boolean): void {
+  hasProject = enabled;
+  applyMenuState();
+}
+
+/** Состояние интерфейса из renderer: история, режим просмотра, выбранная плитка. */
+export function setMenuState(state: MenuState): void {
+  menuState = state;
+  applyMenuState();
+}
+
+function applyMenuState(): void {
   const menu = Menu.getApplicationMenu();
-  for (const id of PROJECT_ITEM_IDS) {
+  for (const [id, { enabled, checked }] of menuItemStates(hasProject, menuState)) {
     const item = menu?.getMenuItemById(id);
-    if (item) item.enabled = enabled;
+    if (!item) continue;
+    item.enabled = enabled;
+    // У radio присваивание отмечает пункт и снимает отметку с остальных в группе — даже false. Поэтому только true.
+    if (checked) item.checked = true;
   }
 }

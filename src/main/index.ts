@@ -4,7 +4,8 @@ import { createActions } from './actions';
 import { ExportService } from './export';
 import { IndexerClient } from './indexer-client';
 import { handle, send } from './ipc';
-import { buildMenu, setProjectMenuEnabled } from './menu';
+import { buildMenu, setMenuState, setProjectMenuEnabled } from './menu';
+import { parseMenuState } from './menu-state';
 import { ProjectService } from './project/service';
 import { parsePatchBatch } from './patch-batch';
 import { handleGridtoneProtocol, registerGridtoneScheme } from './protocol';
@@ -67,10 +68,12 @@ function registerIpc(): void {
     actions.importPhotos(Array.isArray(paths) && paths.every((p) => typeof p === 'string') ? paths : undefined),
   );
   handle('export:run', (request) => actions.exportProject(request));
+  handle('export:reveal', (dir) => actions.revealExport(dir));
   handle('calibration:check', (request) => actions.checkCalibration(request));
   handle('pattern:image', () => actions.openPatternImage());
   handle('lut:import', () => actions.importLut());
   handle('lut:data', (id) => service.lutData(id));
+  handle('menu:state', (state) => setMenuState(parseMenuState(state)));
 }
 
 void app.whenReady().then(() => {

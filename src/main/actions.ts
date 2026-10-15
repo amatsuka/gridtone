@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import {
   app,
   dialog,
+  shell,
   type BrowserWindow,
   type MessageBoxOptions,
   type OpenDialogOptions,
@@ -153,6 +154,15 @@ export function createActions(
         await reportError('Не удалось начать экспорт', err);
         return null;
       }
+    },
+
+    /**
+     * «Показать в Finder» в итоге экспорта: подпапка выделяется в своей родительской папке. Путь приходит из
+     * renderer, поэтому показывается только папка, которую создал экспорт в этом запуске; иначе — ошибка.
+     */
+    revealExport(dir: unknown): void {
+      if (typeof dir !== 'string' || !exporter.isExportFolder(dir)) throw new Error('Это не папка экспорта');
+      shell.showItemInFolder(dir);
     },
 
     /**

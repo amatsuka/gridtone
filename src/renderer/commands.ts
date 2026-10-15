@@ -490,6 +490,9 @@ export function runMenuCommand(command: MenuCommand): void {
     case 'importLut':
       void importLut();
       break;
+    case 'editor':
+      openEditor();
+      break;
   }
 }
 

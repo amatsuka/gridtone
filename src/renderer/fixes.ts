@@ -79,9 +79,13 @@ export function connectFixes(): () => void {
     wanted = new Map();
     if (!snapshot || showOriginal || !analysisTab(inspectorTab)) return publish();
     const requests = slotRequests(snapshot, useLutStore.getState().byId, false);
-    const { bySlot, keys } = useMetricsStore.getState();
-    // Ожидание зависит от всех плиток: пока чьи-то признаки не для нынешних правок, поправки не просим.
-    for (const [slotId, { request }] of requests) if (keys[slotId] !== request.key) return publish();
+    const metrics = useMetricsStore.getState();
+    const { bySlot, keys } = metrics;
+    // Ожидание зависит от всех плиток: пока чьи-то признаки не для нынешних правок, поправки не просим. Плитка,
+    // которую воркер для нынешних правок посчитать не смог, признаков не получит: анализ — без неё, ждать нечего.
+    for (const [slotId, { request }] of requests) {
+      if (keys[slotId] !== request.key && metrics.failed[slotId] !== request.key) return publish();
+    }
 
     for (const outlier of gridAnalysis(snapshot.project, bySlot).outliers) {
       const reason = outlier.reasons[0];
@@ -115,7 +119,7 @@ export function connectFixes(): () => void {
     if (state.snapshot !== prev.snapshot || state.inspectorTab !== prev.inspectorTab || state.showOriginal !== prev.showOriginal) run();
   });
   const unsubscribeMetrics = useMetricsStore.subscribe((state, prev) => {
-    if (state.bySlot !== prev.bySlot || state.keys !== prev.keys) run();
+    if (state.bySlot !== prev.bySlot || state.keys !== prev.keys || state.failed !== prev.failed) run();
   });
   const unsubscribeLuts = useLutStore.subscribe(run);
   run();

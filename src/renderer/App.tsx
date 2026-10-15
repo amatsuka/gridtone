@@ -9,6 +9,7 @@ import { PhotoEditor } from './components/PhotoEditor';
 import { Toolbar } from './components/Toolbar';
 import { connectFixes } from './fixes';
 import { connectLuts } from './luts';
+import { connectMenu } from './menu';
 import { connectMetrics } from './metrics';
 import { connectShortcuts } from './shortcuts';
 import { api, connectStore, useAppStore } from './store';
@@ -19,6 +20,7 @@ export function App() {
   useEffect(() => connectLuts(), []);
   useEffect(() => connectMetrics(), []);
   useEffect(() => connectFixes(), []);
+  useEffect(() => connectMenu(), []);
   const ready = useAppStore((state) => state.ready);
   const snapshot = useAppStore((state) => state.snapshot);
   const editorOpen = useAppStore((state) => state.editorSlotId !== null);
